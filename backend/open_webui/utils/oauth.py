@@ -34,6 +34,12 @@ from open_webui.models.users import Users
 
 from open_webui.models.groups import Groups, GroupModel, GroupUpdateForm, GroupForm
 from open_webui.config import (
+    SSO_API_URL,
+    SSO_API_KEY,
+    SSO_SYSTEM_ID,
+    SSO_DEPT_CODES,
+    SSO_LOGIN_ID_CLAIM,
+    SSO_USER_ID_CLAIM,
     DEFAULT_USER_ROLE,
     ENABLE_OAUTH_SIGNUP,
     OAUTH_REFRESH_TOKEN_INCLUDE_SCOPE,
@@ -1540,6 +1546,46 @@ class OAuthManager:
                             Users.update_user_profile_image_url_by_id(user.id, processed_picture_url, db=db)
                             log.debug(f'Updated profile picture for user {user.email}')
             else:
+                # SSO department validation for new users
+                if SSO_API_URL and SSO_DEPT_CODES:
+                    login_id = user_data.get(SSO_LOGIN_ID_CLAIM, '')
+                    user_epid = user_data.get(SSO_USER_ID_CLAIM, '')
+                    sso_headers = {'x-dep-ticket': f'credential:{SSO_API_KEY}'}
+                    common_params = {
+                        'systemId': SSO_SYSTEM_ID,
+                        'loginUser.login': login_id,
+                        'userEpid': user_epid,
+                    }
+
+                    results = []
+                    async with aiohttp.ClientSession(trust_env=True) as session:
+                        for dept_code in SSO_DEPT_CODES:
+                            params = {**common_params, 'deptCode': dept_code}
+                            try:
+                                async with session.get(
+                                    SSO_API_URL,
+                                    params=params,
+                                    headers=sso_headers,
+                                    ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                                ) as resp:
+                                    if resp.status == 200:
+                                        text = await resp.text()
+                                        results.append(text.strip().upper())
+                                    else:
+                                        log.warning(
+                                            f'SSO validation request failed for deptCode {dept_code}: status {resp.status}'
+                                        )
+                                        results.append(None)
+                            except Exception as e:
+                                log.warning(f'SSO validation request failed for deptCode {dept_code}: {e}')
+                                results.append(None)
+
+                    if all(result == 'N' for result in results if result is not None):
+                        raise HTTPException(
+                            status.HTTP_403_FORBIDDEN,
+                            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+                        )
+
                 # If the user does not exist, check if signups are enabled
                 if auth_manager_config.ENABLE_OAUTH_SIGNUP:
                     # Check if an existing user with the same email already exists
