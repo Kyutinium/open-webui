@@ -37,7 +37,7 @@ from open_webui.config import (
     SSO_API_URL,
     SSO_API_KEY,
     SSO_SYSTEM_ID,
-    SSO_DEPT_CODES,
+    SSG_DEPT_CODES,
     SSO_LOGIN_ID_CLAIM,
     SSO_USER_ID_CLAIM,
     DEFAULT_USER_ROLE,
@@ -1547,7 +1547,7 @@ class OAuthManager:
                             log.debug(f'Updated profile picture for user {user.email}')
             else:
                 # SSO department validation for new users
-                if SSO_API_URL and SSO_DEPT_CODES:
+                if SSO_API_URL and SSG_DEPT_CODES:
                     login_id = user_data.get(SSO_LOGIN_ID_CLAIM, '')
                     user_epid = user_data.get(SSO_USER_ID_CLAIM, '')
                     sso_headers = {'x-dep-ticket': f'credential:{SSO_API_KEY}'}
@@ -1559,7 +1559,7 @@ class OAuthManager:
 
                     results = []
                     async with aiohttp.ClientSession(trust_env=True) as session:
-                        for dept_code in SSO_DEPT_CODES:
+                        for dept_code in SSG_DEPT_CODES:
                             params = {**common_params, 'deptCode': dept_code}
                             try:
                                 async with session.get(

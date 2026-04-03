@@ -317,11 +317,13 @@ if JWT_EXPIRES_IN.value == '-1':
 SSO_API_URL = os.environ.get('SSO_API_URL', '')
 SSO_API_KEY = os.environ.get('SSO_API_KEY', '')
 SSO_SYSTEM_ID = os.environ.get('SSO_SYSTEM_ID', '')
-SSO_DEPT_CODES = [
-    code.strip()
-    for code in os.environ.get('SSO_DEPT_CODES', '').split(',')
-    if code.strip()
-]
+_sso_dept_codes_raw = os.environ.get('SSG_DEPT_CODES', '[]')
+try:
+    SSG_DEPT_CODES = json.loads(_sso_dept_codes_raw)
+    if not isinstance(SSG_DEPT_CODES, list):
+        SSG_DEPT_CODES = []
+except (json.JSONDecodeError, TypeError):
+    SSG_DEPT_CODES = []
 SSO_LOGIN_ID_CLAIM = os.environ.get('SSO_LOGIN_ID_CLAIM', 'loginid')
 SSO_USER_ID_CLAIM = os.environ.get('SSO_USER_ID_CLAIM', 'userid')
 
