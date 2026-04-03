@@ -19,30 +19,17 @@ services:
       - ollama
     ports:
       - "3000:8080"
+    env_file:
+      - .env
     environment:
-      # Ollama
+      # Non-secret config (safe to commit)
       OLLAMA_BASE_URL: http://ollama:11434
-
-      # App branding
       WEBUI_NAME: ChatDRAGON
-      WEBUI_SECRET_KEY: "CHANGE_ME"
-
-      # Database encryption (SQLCipher AES-256)
       DATABASE_TYPE: sqlite+sqlcipher
-      DATABASE_PASSWORD: "CHANGE_ME"
-
-      # SSO department validation
-      SSO_API_URL: "http://"
-      SSO_API_KEY: "CHANGE_ME"
       SSO_SYSTEM_ID: "SY"
-      SSG_DEPT_CODES: '["aaaaa", "xxx"]'
       SSO_LOGIN_ID_CLAIM: loginid
       SSO_USER_ID_CLAIM: userid
-
-      # OAuth
       ENABLE_OAUTH_SIGNUP: "true"
-
-      # Audit logging to DB
       ENABLE_AUDIT_LOGS_DB: "true"
       AUDIT_LOG_LEVEL: REQUEST
     extra_hosts:
