@@ -841,6 +841,7 @@ if OFFLINE_MODE:
 
 ENABLE_AUDIT_STDOUT = os.getenv('ENABLE_AUDIT_STDOUT', 'False').lower() == 'true'
 ENABLE_AUDIT_LOGS_FILE = os.getenv('ENABLE_AUDIT_LOGS_FILE', 'True').lower() == 'true'
+ENABLE_AUDIT_LOGS_DB = os.getenv('ENABLE_AUDIT_LOGS_DB', 'False').lower() == 'true'
 
 # Where to store log file
 # Defaults to the DATA_DIR/audit.log. To set AUDIT_LOGS_FILE_PATH you need to

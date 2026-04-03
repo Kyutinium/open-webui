@@ -24,9 +24,10 @@ from asgiref.typing import (
 from loguru import logger
 from starlette.requests import Request
 
-from open_webui.env import AUDIT_LOG_LEVEL, AUDIT_INCLUDED_PATHS, MAX_BODY_LOG_SIZE
+from open_webui.env import AUDIT_LOG_LEVEL, AUDIT_INCLUDED_PATHS, MAX_BODY_LOG_SIZE, ENABLE_AUDIT_LOGS_DB
 from open_webui.utils.auth import get_current_user, get_http_authorization_cred
 from open_webui.models.users import UserModel
+from open_webui.models.audit_logs import AuditLogs
 
 if TYPE_CHECKING:
     from loguru import Logger
@@ -264,8 +265,9 @@ class AuditLoggingMiddleware:
                     request_body,
                 )
 
+            entry_id = str(uuid.uuid4())
             entry = AuditLogEntry(
-                id=str(uuid.uuid4()),
+                id=entry_id,
                 user=user,
                 audit_level=self.audit_level.value,
                 verb=request.method,
@@ -278,5 +280,19 @@ class AuditLoggingMiddleware:
             )
 
             self.audit_logger.write(entry)
+
+            if ENABLE_AUDIT_LOGS_DB:
+                AuditLogs.insert(
+                    entry_id=entry_id,
+                    user=user,
+                    audit_level=self.audit_level.value,
+                    verb=request.method,
+                    request_uri=str(request.url),
+                    response_status_code=context.metadata.get('response_status_code', None),
+                    source_ip=request.client.host if request.client else None,
+                    user_agent=request.headers.get('user-agent'),
+                    request_object=request_body,
+                    response_object=response_body,
+                )
         except Exception as e:
             logger.error(f'Failed to log audit entry: {str(e)}')
