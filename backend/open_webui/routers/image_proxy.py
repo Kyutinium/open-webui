@@ -93,7 +93,7 @@ async def get_image_list(
 
         content_type = r.headers.get("content-type", "")
 
-        # JSON response → prefix every filename with the folder path
+        # JSON response - prefix every filename with the folder path
         if "application/json" in content_type or content_type.endswith("+json"):
             body = await r.aread()
             try:
@@ -121,7 +121,7 @@ async def get_image_list(
                 headers={"Cross-Origin-Resource-Policy": "cross-origin"},
             )
 
-        # Non-JSON → stream through unchanged
+        # Non-JSON - stream through unchanged
         media_type = r.headers.get("content-type", "application/octet-stream")
         out_headers = {
             k: v for k, v in r.headers.items() if k.lower() in PASS_HEADERS
