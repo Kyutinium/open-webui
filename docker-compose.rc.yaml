@@ -1,13 +1,4 @@
 services:
-  ollama:
-    volumes:
-      - ollama:/root/.ollama
-    container_name: ollama
-    pull_policy: always
-    tty: true
-    restart: unless-stopped
-    image: ollama/ollama:latest
-
   open-webui:
     build:
       context: .
@@ -15,15 +6,11 @@ services:
     container_name: open-webui
     volumes:
       - open-webui:/app/backend/data
-    depends_on:
-      - ollama
     ports:
       - "3000:8080"
     env_file:
       - .env
     environment:
-      # Non-secret config (safe to commit)
-      OLLAMA_BASE_URL: http://ollama:11434
       WEBUI_NAME: ChatDRAGON
       DATABASE_TYPE: sqlite+sqlcipher
       SSO_SYSTEM_ID: "SY"
@@ -37,5 +24,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  ollama: {}
   open-webui: {}
