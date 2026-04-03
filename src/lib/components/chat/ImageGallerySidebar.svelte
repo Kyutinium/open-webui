@@ -11,6 +11,7 @@
 	let currentIndex = 0;
 	let loading = true;
 	let error = '';
+	let directMode = false;
 
 	let sceneElement: HTMLElement;
 	let instance: PanZoom | null = null;
@@ -19,13 +20,34 @@
 	$: currentFile = $imageGalleryData?.current ?? '';
 
 	$: if ($imageGalleryData && $showImageGallery) {
-		loadImageList();
+		loadImages();
 	}
 
-	async function loadImageList() {
-		if (!folder) return;
+	async function loadImages() {
 		loading = true;
 		error = '';
+		currentIndex = 0;
+
+		// Mode 1: Direct image URLs from MCP tool results
+		if ($imageGalleryData?.images && $imageGalleryData.images.length > 0) {
+			directMode = true;
+			images = $imageGalleryData.images;
+			if (currentFile) {
+				const idx = images.findIndex(
+					(img) => img === currentFile || img.endsWith('/' + currentFile) || img.includes(currentFile)
+				);
+				currentIndex = idx >= 0 ? idx : 0;
+			}
+			loading = false;
+			return;
+		}
+
+		// Mode 2: Folder-based listing via image proxy API
+		directMode = false;
+		if (!folder) {
+			loading = false;
+			return;
+		}
 		try {
 			const params = new URLSearchParams({ filename: `${folder}/${currentFile}` });
 			const resp = await fetch(
@@ -35,7 +57,6 @@
 			if (!resp.ok) throw new Error(`Failed to load image list: ${resp.status}`);
 			const data = await resp.json();
 
-			// data may be a flat array of paths or an object with images/data/items key
 			if (Array.isArray(data)) {
 				images = data;
 			} else if (data?.images) {
@@ -48,14 +69,11 @@
 				images = [];
 			}
 
-			// Find the current image index
 			if (currentFile && images.length > 0) {
 				const idx = images.findIndex(
 					(img) => img === currentFile || img.endsWith('/' + currentFile) || img.includes(currentFile)
 				);
 				currentIndex = idx >= 0 ? idx : 0;
-			} else {
-				currentIndex = 0;
 			}
 		} catch (e: any) {
 			error = e.message || 'Failed to load images';
@@ -66,6 +84,11 @@
 	}
 
 	function getImageUrl(imagePath: string): string {
+		// Direct URLs (http/https/data) are used as-is
+		if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
+			return imagePath;
+		}
+		// Folder-based: proxy through open-webui backend
 		const filename = imagePath.split('/').pop() || imagePath;
 		const imageFolder = imagePath.substring(0, imagePath.lastIndexOf('/')) || folder;
 		const params = new URLSearchParams({ filename, folder: imageFolder });

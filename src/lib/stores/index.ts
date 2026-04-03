@@ -108,9 +108,10 @@ export const selectedTerminalId: Writable<string | null> = writable(null);
 // Image Gallery Sidebar
 export const showImageGallery = writable(false);
 export const imageGalleryData: Writable<{
-	folder: string;
-	current: string;
-	baseUrl: string;
+	folder?: string;
+	current?: string;
+	baseUrl?: string;
+	images?: string[];
 } | null> = writable(null);
 
 export const artifactCode = writable(null);
