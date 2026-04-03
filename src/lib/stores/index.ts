@@ -113,6 +113,8 @@ export const imageGalleryData: Writable<{
 	baseUrl?: string;
 	images?: string[];
 } | null> = writable(null);
+export const showToolExplorer = writable(false);
+export const toolExplorerData: Writable<Record<string, any[]> | null> = writable(null);
 
 export const artifactCode = writable(null);
 export const artifactContents = writable(null);

@@ -26,7 +26,7 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import ColonFenceBlock from './ColonFenceBlock.svelte';
 
-	import { showImageGallery, imageGalleryData } from '$lib/stores';
+	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData } from '$lib/stores';
 
 	export let id: string;
 	export let tokens: Token[];
@@ -422,6 +422,31 @@
 				{/each}
 			</div>
 		</ConsecutiveDetailsGroup>
+	{:else if token.type === 'details' && token?.attributes?.type === 'tool_explorer'}
+		<!-- Tool Explorer trigger button -->
+		{@const explorerData = (() => {
+			try {
+				const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
+				return JSON.parse(text);
+			} catch { return null; }
+		})()}
+		{#if explorerData}
+			<button
+				class="flex items-center gap-2 px-3 py-2 my-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition text-sm text-gray-700 dark:text-gray-300"
+				on:click={() => {
+					toolExplorerData.set(explorerData);
+					showToolExplorer.set(true);
+				}}
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-4">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.481L15 17.25m-4.5-15H5.625c-.621 0-1.125.504-1.125 1.125v16.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Zm3.75 11.625a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+				</svg>
+				{$i18n.t('View Tool Results')}
+				<span class="text-xs text-gray-400">
+					({Object.keys(explorerData).length} tools, {Object.values(explorerData).flat().reduce((s, c) => s + (c.results?.length || 0), 0)} results)
+				</span>
+			</button>
+		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
 		<!-- Image Gallery trigger button -->
 		{@const galleryImages = (() => {
