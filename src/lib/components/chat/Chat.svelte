@@ -35,6 +35,7 @@
 		mobile,
 		chatTitle,
 		showArtifacts,
+		showImageGallery,
 		artifactContents,
 		tools,
 		toolServers,
@@ -706,6 +707,13 @@
 				showCallOverlay.set(false);
 				showArtifacts.set(false);
 				showEmbeds.set(false);
+				showImageGallery.set(false);
+			}
+		});
+
+		const showImageGallerySubscribe = showImageGallery.subscribe(async (value) => {
+			if (value) {
+				showControls.set(true);
 			}
 		});
 
@@ -766,6 +774,7 @@
 			try {
 				pageSubscribe();
 				showControlsSubscribe();
+				showImageGallerySubscribe();
 				selectedFolderSubscribe();
 				window.removeEventListener('message', onMessageHandler);
 				$socket?.off('events', chatEventHandler);
@@ -1137,6 +1146,7 @@
 		}
 		await showCallOverlay.set(false);
 		await showArtifacts.set(false);
+		await showImageGallery.set(false);
 
 		if ($page.url.pathname.includes('/c/')) {
 			window.history.replaceState(history.state, '', `/`);

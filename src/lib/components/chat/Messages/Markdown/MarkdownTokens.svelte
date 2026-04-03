@@ -26,6 +26,8 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import ColonFenceBlock from './ColonFenceBlock.svelte';
 
+	import { showImageGallery, imageGalleryData } from '$lib/stores';
+
 	export let id: string;
 	export let tokens: Token[];
 	export let top = true;
@@ -420,6 +422,25 @@
 				{/each}
 			</div>
 		</ConsecutiveDetailsGroup>
+	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
+		<!-- Image Gallery trigger button -->
+		<button
+			class="flex items-center gap-2 px-3 py-2 my-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition text-sm text-gray-700 dark:text-gray-300"
+			on:click={() => {
+				imageGalleryData.set({
+					folder: token.attributes?.folder ?? '',
+					current: token.attributes?.current ?? '',
+					baseUrl: token.attributes?.base_url ?? ''
+				});
+				showImageGallery.set(true);
+			}}
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-4">
+				<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
+			</svg>
+			{$i18n.t('Open Image Gallery')}
+			<span class="text-xs text-gray-400">({token.attributes?.folder?.split('/').pop() ?? ''})</span>
+		</button>
 	{:else if token.type === 'details'}
 		{@const textContent = getDetailTextContent(token)}
 
