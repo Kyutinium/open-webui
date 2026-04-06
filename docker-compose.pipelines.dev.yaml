@@ -1,0 +1,19 @@
+services:
+  pipelines-dev:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: pipelines-dev
+    ports:
+      - "9098:9099"
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY}
+      - PIPELINES_PORT=9099
+      - PYTHONIOENCODING=utf-8
+      - LANG=C.UTF-8
+      - NO_PROXY=host.docker.internal,localhost,127.0.0.1
+      - no_proxy=host.docker.internal,localhost,127.0.0.1
+    volumes:
+      - ./pipelines_dev:/app/pipelines
+      - /home/cvtuadmin/chatdram_data/webui_data/serving_images:/app/shared_images
