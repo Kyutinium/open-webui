@@ -1,20 +1,19 @@
-# Pipelines dev service for Open WebUI
-# Usage: docker compose -f docker-compose.pipelines.dev.yaml up -d
-#
-# Mount local ./pipelines directory into the container so pipe files
-# are picked up automatically. Edit .env or pass env vars to configure.
-
 services:
   pipelines-dev:
     image: ghcr.io/open-webui/pipelines:main
     container_name: pipelines-dev
     ports:
-      - ${PIPELINES_PORT:-9098}:9099
-    volumes:
-      - ./pipelines:/app/pipelines
+      - "9098:9099"
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY}
+      - PIPELINES_PORT=9099
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
-    extra_hosts:
-      - host.docker.internal:host-gateway
-    restart: unless-stopped
+      - NO_PROXY=host.docker.internal,localhost,127.0.0.1
+      - no_proxy=host.docker.internal,localhost,127.0.0.1
+    volumes:
+      - ./pipelines_dev:/app/pipelines
+      - /home/cvtuadmin/chatdram_data/webui_data/serving_images:/app/shared_images
