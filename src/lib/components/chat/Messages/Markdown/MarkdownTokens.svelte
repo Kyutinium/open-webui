@@ -36,7 +36,13 @@
 			const merged = { ...existing };
 			for (const [key, calls] of Object.entries(data)) {
 				if (!merged[key]) merged[key] = [];
-				merged[key] = [...merged[key], ...calls];
+				// Dedup: skip calls with same query + same result count
+				for (const call of calls) {
+					const isDup = merged[key].some(
+						(c: any) => c.query === call.query && c.results?.length === call.results?.length
+					);
+					if (!isDup) merged[key] = [...merged[key], call];
+				}
 			}
 			toolExplorerData.set(merged);
 		} else {
