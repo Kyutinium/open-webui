@@ -1,0 +1,27 @@
+services:
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.rc
+    container_name: open-webui
+    volumes:
+      - open-webui:/app/backend/data
+    ports:
+      - "3000:8080"
+    env_file:
+      - .env
+    environment:
+      WEBUI_NAME: ChatDRAGON
+      DATABASE_TYPE: sqlite+sqlcipher
+      SSO_SYSTEM_ID: "SY"
+      SSO_LOGIN_ID_CLAIM: loginid
+      SSO_USER_ID_CLAIM: userid
+      ENABLE_OAUTH_SIGNUP: "true"
+      ENABLE_AUDIT_LOGS_DB: "true"
+      AUDIT_LOG_LEVEL: REQUEST
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+
+volumes:
+  open-webui: {}
