@@ -151,9 +151,9 @@
 						<path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
 					</svg>
 					<span class="flex-1 text-xs text-gray-700 dark:text-gray-300 truncate font-medium">
-						{call.query || 'Search'}
+						<span class="text-gray-400 font-normal">{$i18n.t('Search')}:</span> {call.query || '...'}
 					</span>
-					<span class="text-[10px] text-gray-400 shrink-0">({call.results.length})</span>
+					<span class="text-[10px] text-gray-400 shrink-0">({call.results?.length || 0})</span>
 				</button>
 
 				<!-- Result items -->

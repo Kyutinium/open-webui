@@ -299,7 +299,7 @@
 				{:else if $showToolExplorer && $toolExplorerData}
 					<ToolExplorerSidebar
 						toolData={$toolExplorerData}
-						onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); }}
+						onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); showControls.set(false); }}
 					/>
 				{:else}
 					<!-- Controls + Files tabs -->
@@ -452,7 +452,7 @@
 					{:else if $showToolExplorer && $toolExplorerData}
 						<ToolExplorerSidebar
 							toolData={$toolExplorerData}
-							onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); }}
+							onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); showControls.set(false); }}
 						/>
 					{:else}
 						<!-- Controls + Files tabs -->
