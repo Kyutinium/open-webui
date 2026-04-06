@@ -9,7 +9,7 @@ services:
     image: ghcr.io/open-webui/pipelines:main
     container_name: pipelines-dev
     ports:
-      - ${PIPELINES_PORT:-9099}:9099
+      - ${PIPELINES_PORT:-9098}:9099
     volumes:
       - ./pipelines:/app/pipelines
     environment:
