@@ -37,6 +37,7 @@
 		showArtifacts,
 		showImageGallery,
 		showToolExplorer,
+		toolExplorerData,
 		artifactContents,
 		tools,
 		toolServers,
@@ -710,6 +711,7 @@
 				showEmbeds.set(false);
 				showImageGallery.set(false);
 				showToolExplorer.set(false);
+				toolExplorerData.set(null);
 			}
 		});
 
@@ -1157,6 +1159,7 @@
 		await showArtifacts.set(false);
 		await showImageGallery.set(false);
 		await showToolExplorer.set(false);
+		toolExplorerData.set(null);
 
 		if ($page.url.pathname.includes('/c/')) {
 			window.history.replaceState(history.state, '', `/`);
