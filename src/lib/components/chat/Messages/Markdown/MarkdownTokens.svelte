@@ -443,7 +443,7 @@
 				</svg>
 				{$i18n.t('View Tool Results')}
 				<span class="text-xs text-gray-400">
-					({Object.keys(explorerData).length} tools, {Object.values(explorerData).flat().reduce((s, c) => s + (c.results?.length || 0), 0)} results)
+					({Object.keys(explorerData || {}).length} tools, {Object.values(explorerData || {}).flat().reduce((s, c) => s + (c?.results?.length || 0), 0)} results)
 				</span>
 			</button>
 		{/if}

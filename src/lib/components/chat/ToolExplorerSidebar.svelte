@@ -17,14 +17,14 @@
 
 	// Tab state
 	let activeTab = '';
-	$: tabs = Object.keys(toolData);
+	$: tabs = Object.keys(toolData || {});
 	$: if (tabs.length > 0 && !tabs.includes(activeTab)) {
 		activeTab = tabs[0];
 	}
 
 	// Total results count per tab
 	function tabCount(tab: string): number {
-		return (toolData[tab] || []).reduce((sum, call) => sum + call.results.length, 0);
+		return (toolData?.[tab] || []).reduce((sum, call) => sum + (call?.results?.length || 0), 0);
 	}
 
 	// Expand/collapse state for each query
