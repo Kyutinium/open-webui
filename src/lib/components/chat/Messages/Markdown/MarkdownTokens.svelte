@@ -423,7 +423,7 @@
 			</div>
 		</ConsecutiveDetailsGroup>
 	{:else if token.type === 'details' && token?.attributes?.type === 'tool_explorer'}
-		<!-- Tool Explorer: auto-open sidebar, merge results live -->
+		<!-- Tool Explorer: auto-open sidebar, merge results -->
 		{@const explorerData = (() => {
 			try {
 				const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
@@ -446,7 +446,20 @@
 				if (!$showToolExplorer) showToolExplorer.set(true);
 				return true;
 			})()}
-			<!-- Hidden during streaming; no inline button clutter -->
+			{#if done}
+				<button
+					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
+					on:click={() => {
+						toolExplorerData.set(explorerData);
+						showToolExplorer.set(true);
+					}}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3">
+						<path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
+					</svg>
+					{Object.values(explorerData || {}).flat().reduce((s, c) => s + (c?.results?.length || 0), 0)} results
+				</button>
+			{/if}
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
 		<!-- Image Gallery trigger button -->
