@@ -449,6 +449,11 @@
 						<Artifacts {history} overlay={dragged} />
 					{:else if $showImageGallery}
 						<ImageGallerySidebar />
+					{:else if $showToolExplorer && $toolExplorerData}
+						<ToolExplorerSidebar
+							toolData={$toolExplorerData}
+							onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); }}
+						/>
 					{:else}
 						<!-- Controls + Files tabs -->
 						<div class="flex flex-col h-full min-h-0">
