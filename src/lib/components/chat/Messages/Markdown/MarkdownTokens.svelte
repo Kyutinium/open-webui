@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { decode } from 'html-entities';
 	import { onMount, getContext } from 'svelte';
+	import { get } from 'svelte/store';
 	const i18n = getContext('i18n');
 
 	import fileSaver from 'file-saver';
@@ -27,6 +28,22 @@
 	import ColonFenceBlock from './ColonFenceBlock.svelte';
 
 	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData } from '$lib/stores';
+
+	function autoOpenToolExplorer(node: HTMLElement, data: Record<string, any[]>) {
+		if (!data) return;
+		const existing = get(toolExplorerData);
+		if (existing) {
+			const merged = { ...existing };
+			for (const [key, calls] of Object.entries(data)) {
+				if (!merged[key]) merged[key] = [];
+				merged[key] = [...merged[key], ...calls];
+			}
+			toolExplorerData.set(merged);
+		} else {
+			toolExplorerData.set(data);
+		}
+		showToolExplorer.set(true);
+	}
 
 	export let id: string;
 	export let tokens: Token[];
@@ -431,21 +448,7 @@
 			} catch { return null; }
 		})()}
 		{#if explorerData}
-			{@const _autoOpen = (() => {
-				const existing = $toolExplorerData;
-				if (existing) {
-					const merged = { ...existing };
-					for (const [key, calls] of Object.entries(explorerData)) {
-						if (!merged[key]) merged[key] = [];
-						merged[key] = [...merged[key], ...calls];
-					}
-					toolExplorerData.set(merged);
-				} else {
-					toolExplorerData.set(explorerData);
-				}
-				if (!$showToolExplorer) showToolExplorer.set(true);
-				return true;
-			})()}
+			<span use:autoOpenToolExplorer={explorerData} class="hidden" />
 			{#if done}
 				<button
 					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
