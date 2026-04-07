@@ -727,6 +727,12 @@
 			}
 		});
 
+		const chatIdSubscribe = chatId.subscribe(() => {
+			// Clear tool explorer data when switching chats
+			toolExplorerData.set(null);
+			showToolExplorer.set(false);
+		});
+
 		const selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
 			await tick();
 			if (
@@ -786,6 +792,7 @@
 				showControlsSubscribe();
 				showImageGallerySubscribe();
 				showToolExplorerSubscribe();
+				chatIdSubscribe();
 				selectedFolderSubscribe();
 				window.removeEventListener('message', onMessageHandler);
 				$socket?.off('events', chatEventHandler);
