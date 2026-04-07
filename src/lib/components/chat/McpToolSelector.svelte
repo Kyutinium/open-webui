@@ -78,9 +78,12 @@
 			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<div
 				class="fixed inset-0 z-40"
-				on:click={() => (showDropdown = false)}
+				on:mousedown={() => (showDropdown = false)}
 			/>
-			<div class="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
+			<div
+				class="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1"
+				on:mousedown|stopPropagation
+			>
 				<div class="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider">
 					{$i18n.t('Search Tools')}
 				</div>
