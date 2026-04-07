@@ -1,3 +1,7 @@
+<script context="module" lang="ts">
+	let _mcpInitialized = false;
+</script>
+
 <script lang="ts">
 	import { onMount, getContext } from 'svelte';
 	import { WEBUI_BASE_URL } from '$lib/constants';
@@ -18,9 +22,10 @@
 			});
 			if (resp.ok) {
 				mcpTools = await resp.json();
-				// Default: all tools selected
-				if (selectedMcpTools.length === 0 && mcpTools.length > 0) {
+				// Only set defaults on first ever mount, not re-mounts
+				if (!_mcpInitialized && selectedMcpTools.length === 0 && mcpTools.length > 0) {
 					selectedMcpTools = mcpTools.map((t) => t.id);
+					_mcpInitialized = true;
 				}
 			}
 		} catch (e) {
