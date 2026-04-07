@@ -80,48 +80,35 @@
 				class="fixed inset-0 z-40"
 				on:click={() => (showDropdown = false)}
 			/>
-			<div class="absolute bottom-full left-0 mb-2 w-48 bg-white dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
+			<div class="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
 				<div class="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider">
 					{$i18n.t('Search Tools')}
 				</div>
 
 				<!-- Select All -->
 				<button
-					class="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+					class="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
 					on:click={toggleAll}
 				>
-					<div class="w-3.5 h-3.5 rounded border flex items-center justify-center {allSelected
-						? 'bg-blue-500 border-blue-500'
-						: someSelected
-							? 'bg-blue-500/50 border-blue-500/50'
-							: 'border-gray-300 dark:border-gray-600'}">
-						{#if allSelected || someSelected}
-							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white" class="size-2.5">
-								<path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" />
-							</svg>
-						{/if}
-					</div>
 					<span class="text-gray-700 dark:text-gray-300 font-medium">{$i18n.t('All')}</span>
+					<div class="w-8 h-4.5 rounded-full transition-colors duration-200 {allSelected ? 'bg-blue-500' : someSelected ? 'bg-blue-300' : 'bg-gray-300 dark:bg-gray-600'} relative">
+						<div class="absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform duration-200 {allSelected || someSelected ? 'translate-x-3.5' : ''}" />
+					</div>
 				</button>
 
 				<div class="border-t border-gray-100 dark:border-gray-800 my-0.5" />
 
 				<!-- Individual tools -->
 				{#each mcpTools as tool}
+					{@const isOn = selectedMcpTools.includes(tool.id)}
 					<button
-						class="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+						class="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
 						on:click={() => toggleTool(tool.id)}
 					>
-						<div class="w-3.5 h-3.5 rounded border flex items-center justify-center {selectedMcpTools.includes(tool.id)
-							? 'bg-blue-500 border-blue-500'
-							: 'border-gray-300 dark:border-gray-600'}">
-							{#if selectedMcpTools.includes(tool.id)}
-								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white" class="size-2.5">
-									<path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" />
-								</svg>
-							{/if}
-						</div>
 						<span class="text-gray-700 dark:text-gray-300">{tool.name}</span>
+						<div class="w-8 h-4.5 rounded-full transition-colors duration-200 {isOn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} relative">
+							<div class="absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform duration-200 {isOn ? 'translate-x-3.5' : ''}" />
+						</div>
 					</button>
 				{/each}
 			</div>
