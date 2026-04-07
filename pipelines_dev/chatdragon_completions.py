@@ -490,13 +490,6 @@ class Pipeline:
         messages: list,
         body: dict,
     ):
-        try:
-            return self._pipe_inner(user_message, model_id, messages, body)
-        except Exception as e:
-            log.exception("[PIPE] pipe() error: %s", e)
-            return f"Error: {e}"
-
-    def _pipe_inner(self, user_message, model_id, messages, body):
         __user__ = body.get("user", {})
         __user_id__ = __user__.get("id", "")
         __metadata__ = body.get("metadata", {})
@@ -638,13 +631,6 @@ class Pipeline:
         }
         if chat_id:
             payload["session_id"] = chat_id
-
-        # Pass selected MCP tools to gateway as allowed_tools
-        # mcp_tools = body.get("mcp_tools") or __metadata__.get("mcp_tools")
-        # if mcp_tools and isinstance(mcp_tools, list):
-        #     base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill"]
-        #     payload["allowed_tools"] = base_tools + mcp_tools
-        #     log.info("[PIPE] allowed_tools: %s", payload["allowed_tools"])
 
         if use_stream:
             return self._stream(payload, __task__)
@@ -909,45 +895,46 @@ class Pipeline:
                             full_text_acc += chunk
                             yield chunk
 
-        except GeneratorExit:
-            return
         except Exception as e:
             log.error("Stream error: %s", e)
             yield f"\n\nError: {e}"
-
-        # Post-stream finalization (NOT in finally — yield is unsafe there)
-        if thought_wrapped and thought_opened and not response_tag_sent:
-            if not any_tool_used and text_buffer:
-                yield "\n</thought>\n\n"
-                full_text_acc += text_buffer
-                yield text_buffer
-            else:
-                if text_buffer:
+        finally:
+            if thought_wrapped and thought_opened and not response_tag_sent:
+                if not any_tool_used and text_buffer:
+                    # No tools were used and model didn't emit <response> —
+                    # treat the entire content as the response, not thought.
+                    yield "\n</thought>\n\n"
                     full_text_acc += text_buffer
                     yield text_buffer
-                yield "\n</thought>"
+                else:
+                    if text_buffer:
+                        full_text_acc += text_buffer
+                        yield text_buffer
+                    yield "\n</thought>"
 
-        # Emit final "검색된 문서 보기" button with all collected results
-        if tool_explorer_data:
-            body = json.dumps(tool_explorer_data, ensure_ascii=False)
-            yield (
-                f'\n\n<details type="search_results_button" done="true">\n'
-                f'<summary>Search Results</summary>\n'
-                f'{body}\n'
-                f'</details>\n\n'
-            )
+            # (tool_explorer tags emitted live during streaming)
 
-        # Emit image gallery for collected MCP thumbnails
-        if collected_thumbnails:
-            yield self._build_gallery_tag(images=collected_thumbnails)
+            # Emit final "검색된 문서 보기" button with all collected results
+            if tool_explorer_data:
+                body = json.dumps(tool_explorer_data, ensure_ascii=False)
+                yield (
+                    f'\n\n<details type="search_results_button" done="true">\n'
+                    f'<summary>Search Results</summary>\n'
+                    f'{body}\n'
+                    f'</details>\n\n'
+                )
 
-        # Emit image gallery tags for any IMAGE_SERVER_BASE URLs found
-        gallery_matches = self._detect_image_gallery_urls(full_text_acc)
-        for match in gallery_matches:
-            yield self._build_gallery_tag(
-                folder=match["folder"],
-                current=match["current"],
-                base_url=match["base_url"],
+            # Emit image gallery for collected MCP thumbnails
+            if collected_thumbnails:
+                yield self._build_gallery_tag(images=collected_thumbnails)
+
+            # Emit image gallery tags for any IMAGE_SERVER_BASE URLs found
+            gallery_matches = self._detect_image_gallery_urls(full_text_acc)
+            for match in gallery_matches:
+                yield self._build_gallery_tag(
+                    folder=match["folder"],
+                    current=match["current"],
+                    base_url=match["base_url"],
                 )
 
     def _render_system_event(
