@@ -76,8 +76,17 @@
 				currentIndex = idx >= 0 ? idx : 0;
 			}
 		} catch (e: any) {
-			error = e.message || 'Failed to load images';
-			images = [];
+			// Fallback: if API fails, show the current thumbnail as single image
+			const fallbackUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
+			if (fallbackUrl) {
+				directMode = true;
+				images = [fallbackUrl];
+				currentIndex = 0;
+				error = '';
+			} else {
+				error = e.message || 'Failed to load images';
+				images = [];
+			}
 		} finally {
 			loading = false;
 		}
