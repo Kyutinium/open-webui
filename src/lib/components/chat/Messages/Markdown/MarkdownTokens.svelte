@@ -29,14 +29,16 @@
 
 	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData } from '$lib/stores';
 
-	function autoOpenToolExplorer(node: HTMLElement, data: Record<string, any[]>) {
+	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean }) {
+		const { data, messageDone } = params;
 		if (!data) return;
+		// Only auto-open during streaming (not when loading old messages)
+		if (messageDone) return;
 		const existing = get(toolExplorerData);
 		if (existing) {
 			const merged = { ...existing };
 			for (const [key, calls] of Object.entries(data)) {
 				if (!merged[key]) merged[key] = [];
-				// Dedup: skip calls with same query + same result count
 				for (const call of calls) {
 					const isDup = merged[key].some(
 						(c: any) => c.query === call.query && c.results?.length === call.results?.length
@@ -454,7 +456,7 @@
 			} catch { return null; }
 		})()}
 		{#if explorerData}
-			<span use:autoOpenToolExplorer={explorerData} class="hidden" />
+			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done }} class="hidden" />
 			{#if done}
 				<button
 					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
