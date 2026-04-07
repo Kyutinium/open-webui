@@ -457,7 +457,7 @@
 			</div>
 		</ConsecutiveDetailsGroup>
 	{:else if token.type === 'details' && token?.attributes?.type === 'tool_explorer'}
-		<!-- Tool Explorer: auto-open sidebar, merge results -->
+		<!-- Tool Explorer: auto-open sidebar during streaming, no visible UI -->
 		{@const explorerData = (() => {
 			try {
 				const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
@@ -466,7 +466,17 @@
 		})()}
 		{#if explorerData}
 			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done }} class="hidden" />
-			{#if done}
+		{/if}
+	{:else if token.type === 'details' && token?.attributes?.type === 'search_results_button'}
+		<!-- Final "검색된 문서 보기" button (only shown after done) -->
+		{#if done}
+			{@const explorerData = (() => {
+				try {
+					const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
+					return JSON.parse(text);
+				} catch { return null; }
+			})()}
+			{#if explorerData}
 				<button
 					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
 					on:click={() => {
@@ -482,36 +492,7 @@
 			{/if}
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
-		<!-- Image Gallery trigger button -->
-		{@const galleryImages = (() => {
-			try {
-				const raw = token.attributes?.images ?? '';
-				if (!raw) return undefined;
-				const restored = raw.replace(/\[/g, '<').replace(/\]/g, '>').replace(/\+/g, '&').replace(/'/g, '"');
-				return JSON.parse(restored);
-			} catch { return undefined; }
-		})()}
-		{@const galleryLabel = galleryImages
-			? `${galleryImages.length} images`
-			: token.attributes?.folder?.split('/').pop() ?? ''}
-		<button
-			class="flex items-center gap-2 px-3 py-2 my-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition text-sm text-gray-700 dark:text-gray-300"
-			on:click={() => {
-				imageGalleryData.set({
-					folder: token.attributes?.folder ?? '',
-					current: token.attributes?.current ?? '',
-					baseUrl: token.attributes?.base_url ?? '',
-					images: galleryImages
-				});
-				showImageGallery.set(true);
-			}}
-		>
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-4">
-				<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
-			</svg>
-			{$i18n.t('Open Image Gallery')}
-			<span class="text-xs text-gray-400">({galleryLabel})</span>
-		</button>
+		<!-- Image Gallery: no visible button, handled via ToolExplorer thumbnail click -->
 	{:else if token.type === 'details'}
 		{@const textContent = getDetailTextContent(token)}
 
