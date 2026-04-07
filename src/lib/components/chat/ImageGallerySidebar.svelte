@@ -20,6 +20,40 @@
 
 	let sceneElement: HTMLElement;
 	let instance: PanZoom | null = null;
+	let thumbStrip: HTMLElement;
+
+	// Auto-scroll thumbnail strip to keep current in view
+	$: if (thumbStrip && images.length > 1) {
+		const thumb = thumbStrip.children[currentIndex] as HTMLElement;
+		if (thumb) {
+			thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+		}
+	}
+
+	// Drag-to-scroll for thumbnail strip
+	let isDragging = false;
+	let dragStartX = 0;
+	let dragScrollLeft = 0;
+
+	function onThumbMouseDown(e: MouseEvent) {
+		isDragging = true;
+		dragStartX = e.pageX - thumbStrip.offsetLeft;
+		dragScrollLeft = thumbStrip.scrollLeft;
+		thumbStrip.style.cursor = 'grabbing';
+	}
+
+	function onThumbMouseMove(e: MouseEvent) {
+		if (!isDragging) return;
+		e.preventDefault();
+		const x = e.pageX - thumbStrip.offsetLeft;
+		const walk = (x - dragStartX) * 2;
+		thumbStrip.scrollLeft = dragScrollLeft - walk;
+	}
+
+	function onThumbMouseUp() {
+		isDragging = false;
+		if (thumbStrip) thumbStrip.style.cursor = 'grab';
+	}
 
 	$: folder = $imageGalleryData?.folder ?? '';
 	$: currentFile = $imageGalleryData?.current ?? '';
@@ -298,18 +332,26 @@
 			<!-- Thumbnail strip (only show discovered pages, max 20 visible) -->
 			{#if images.length > 1}
 				<div class="border-t border-gray-100 dark:border-gray-800 shrink-0">
-					<div class="flex gap-1 p-2 overflow-x-auto scrollbar-hidden">
+					<!-- svelte-ignore a11y-no-static-element-interactions -->
+					<div
+						bind:this={thumbStrip}
+						class="flex gap-1 p-2 overflow-x-auto scrollbar-hidden cursor-grab select-none"
+						on:mousedown={onThumbMouseDown}
+						on:mousemove={onThumbMouseMove}
+						on:mouseup={onThumbMouseUp}
+						on:mouseleave={onThumbMouseUp}
+					>
 						{#each images as img, idx}
 							<button
 								class="shrink-0 w-10 h-10 rounded overflow-hidden border-2 transition {idx === currentIndex
 									? 'border-blue-500 ring-1 ring-blue-500/30'
 									: 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'}"
-								on:click={() => goTo(idx)}
+								on:click={() => { if (!isDragging) goTo(idx); }}
 							>
 								<img
 									src={getImageUrl(img)}
 									alt={img.split('/').pop()}
-									class="w-full h-full object-cover"
+									class="w-full h-full object-cover pointer-events-none"
 									loading="lazy"
 								/>
 							</button>
