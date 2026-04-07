@@ -27,13 +27,22 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import ColonFenceBlock from './ColonFenceBlock.svelte';
 
-	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData } from '$lib/stores';
+	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData, chatId } from '$lib/stores';
+
+	// Track which chatId the tool explorer was last populated for
+	let _toolExplorerChatId = '';
 
 	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean }) {
 		const { data, messageDone } = params;
 		if (!data) return;
 		// Only auto-open during streaming (not when loading old messages)
 		if (messageDone) return;
+		const currentChatId = get(chatId);
+		// If chatId changed since last population, reset first
+		if (_toolExplorerChatId && _toolExplorerChatId !== currentChatId) {
+			toolExplorerData.set(null);
+		}
+		_toolExplorerChatId = currentChatId;
 		const existing = get(toolExplorerData);
 		if (existing) {
 			const merged = { ...existing };
