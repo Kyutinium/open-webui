@@ -9,7 +9,14 @@
 	let images: string[] = [];
 	let currentIndex = 0;
 	let loading = true;
-	let error = '';
+
+	// Page URL pattern state
+	let pageBase = '';
+	let pageExt = '';
+	let minPage = 1;
+	let maxPageFound = 1;
+	let maxPageSearching = false;
+	let patternMode = false;
 
 	let sceneElement: HTMLElement;
 	let instance: PanZoom | null = null;
@@ -21,66 +28,58 @@
 		loadImages();
 	}
 
-	/**
-	 * Parse a thumbnail URL to extract the base pattern and page number.
-	 * e.g. "http://host:port/thumbnails/recn/DOC_ID/page/3.png"
-	 *   -> { base: "http://host:port/thumbnails/recn/DOC_ID/page/", ext: ".png", pageNum: 3 }
-	 */
 	function parsePageUrl(url: string): { base: string; ext: string; pageNum: number } | null {
-		// Match pattern: .../{number}.{ext}
 		const match = url.match(/^(.+\/)(\d+)(\.\w+)$/);
 		if (!match) return null;
 		return { base: match[1], pageNum: parseInt(match[2], 10), ext: match[3] };
 	}
 
-	/**
-	 * Probe image URLs sequentially to discover all pages.
-	 * Starts from page 1 and increments until a 404/error.
-	 */
-	async function probePages(base: string, ext: string, maxPages = 200): Promise<string[]> {
-		const found: string[] = [];
-		// Probe in batches of 5 for speed
-		const batchSize = 5;
-		let start = 1;
-		let done = false;
+	function buildPageUrl(n: number): string {
+		return `${pageBase}${n}${pageExt}`;
+	}
 
-		while (!done && start <= maxPages) {
-			const batch = Array.from({ length: batchSize }, (_, i) => start + i);
-			const results = await Promise.all(
-				batch.map(async (n) => {
-					const url = `${base}${n}${ext}`;
-					try {
-						const resp = await fetch(url, { method: 'HEAD', mode: 'no-cors' }).catch(() => null);
-						// no-cors returns opaque response; use Image instead
-						return new Promise<{ n: number; url: string; ok: boolean }>((resolve) => {
-							const img = new Image();
-							img.onload = () => resolve({ n, url, ok: true });
-							img.onerror = () => resolve({ n, url, ok: false });
-							img.src = url;
-						});
-					} catch {
-						return { n, url, ok: false };
-					}
-				})
-			);
+	function checkImageExists(url: string): Promise<boolean> {
+		return new Promise((resolve) => {
+			const img = new Image();
+			img.onload = () => resolve(true);
+			img.onerror = () => resolve(false);
+			img.src = url;
+		});
+	}
 
-			for (const r of results) {
-				if (r.ok) {
-					found.push(r.url);
-				} else {
-					done = true;
-					break;
-				}
+	async function discoverMaxPage(startFrom: number) {
+		if (maxPageSearching) return;
+		maxPageSearching = true;
+		let n = startFrom;
+		while (true) {
+			const exists = await checkImageExists(buildPageUrl(n + 1));
+			if (exists) {
+				n++;
+				maxPageFound = n;
+				rebuildImageList();
+			} else {
+				break;
 			}
-			start += batchSize;
 		}
-		return found;
+		maxPageSearching = false;
+	}
+
+	function rebuildImageList() {
+		const newImages: string[] = [];
+		for (let i = minPage; i <= maxPageFound; i++) {
+			newImages.push(buildPageUrl(i));
+		}
+		images = newImages;
 	}
 
 	async function loadImages() {
 		loading = true;
-		error = '';
 		currentIndex = 0;
+		patternMode = false;
+		pageBase = '';
+		pageExt = '';
+		minPage = 1;
+		maxPageFound = 1;
 
 		// Mode 1: Direct image URLs provided
 		if ($imageGalleryData?.images && $imageGalleryData.images.length > 0) {
@@ -95,35 +94,62 @@
 			return;
 		}
 
-		// Mode 2: URL pattern-based page discovery
-		// Reconstruct full URL from folder + currentFile
+		// Mode 2: URL pattern-based lazy loading
 		const fullUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
 		if (!fullUrl) {
+			images = [];
 			loading = false;
 			return;
 		}
 
 		const parsed = parsePageUrl(fullUrl);
 		if (parsed) {
-			// Probe all pages in this document
-			const pages = await probePages(parsed.base, parsed.ext);
-			if (pages.length > 0) {
-				images = pages;
-				// Find current page index
-				const idx = pages.findIndex((p) => p.includes(`/${parsed.pageNum}${parsed.ext}`));
-				currentIndex = idx >= 0 ? idx : 0;
-			} else {
-				// Probing failed, show at least the clicked thumbnail
-				images = [fullUrl];
-				currentIndex = 0;
-			}
+			patternMode = true;
+			pageBase = parsed.base;
+			pageExt = parsed.ext;
+			maxPageFound = parsed.pageNum;
+
+			// Start with just the clicked page
+			images = [fullUrl];
+			currentIndex = 0;
+			loading = false;
+
+			// Discover nearby pages in background
+			// Check forward
+			discoverMaxPage(parsed.pageNum);
+			// Check backward (find minPage)
+			discoverMinPage(parsed.pageNum);
 		} else {
 			// Not a page-numbered URL, show as single image
 			images = [fullUrl];
 			currentIndex = 0;
+			loading = false;
 		}
+	}
 
-		loading = false;
+	async function discoverMinPage(startFrom: number) {
+		let n = startFrom;
+		while (n > 1) {
+			const exists = await checkImageExists(buildPageUrl(n - 1));
+			if (exists) {
+				n--;
+				minPage = n;
+				rebuildImageList();
+				// Update currentIndex to keep same image selected
+				currentIndex = images.findIndex((img) => img === buildPageUrl(startFrom));
+				if (currentIndex < 0) currentIndex = 0;
+			} else {
+				break;
+			}
+		}
+	}
+
+	async function ensurePageAhead(currentPage: number, ahead: number = 3) {
+		if (!patternMode) return;
+		const target = currentPage + ahead;
+		if (target <= maxPageFound) return;
+		if (maxPageSearching) return;
+		await discoverMaxPage(maxPageFound);
 	}
 
 	function getImageUrl(imagePath: string): string {
@@ -134,6 +160,11 @@
 		if (index < 0 || index >= images.length) return;
 		currentIndex = index;
 		resetZoom();
+		// Pre-fetch ahead when navigating forward
+		if (patternMode) {
+			const currentPage = minPage + index;
+			ensurePageAhead(currentPage);
+		}
 	}
 
 	function prev() {
@@ -187,6 +218,9 @@
 	$: currentImageName = images[currentIndex]
 		? images[currentIndex].split('/').pop()
 		: '';
+	$: pageDisplay = patternMode
+		? `${minPage + currentIndex}`
+		: `${currentIndex + 1}`;
 </script>
 
 {#if $showImageGallery}
@@ -212,10 +246,6 @@
 		{#if loading}
 			<div class="flex-1 flex items-center justify-center">
 				<div class="text-sm text-gray-400">{$i18n.t('Loading')}...</div>
-			</div>
-		{:else if error}
-			<div class="flex-1 flex items-center justify-center p-4">
-				<div class="text-sm text-red-500">{error}</div>
 			</div>
 		{:else if images.length === 0}
 			<div class="flex-1 flex items-center justify-center">
@@ -249,14 +279,14 @@
 					</button>
 
 					<div class="text-xs text-gray-500 dark:text-gray-400 text-center truncate px-2">
-						<span class="font-medium">{currentIndex + 1}</span> / {images.length}
+						<span class="font-medium">p.{pageDisplay}</span> / {images.length}{maxPageSearching ? '+' : ''}
 						<div class="truncate text-[10px] opacity-70 mt-0.5">{currentImageName}</div>
 					</div>
 
 					<button
 						class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-30 disabled:cursor-not-allowed"
 						on:click={next}
-						disabled={currentIndex === images.length - 1}
+						disabled={currentIndex === images.length - 1 && !maxPageSearching}
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
 							<path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
@@ -265,26 +295,28 @@
 				</div>
 			</div>
 
-			<!-- Thumbnail strip -->
-			<div class="border-t border-gray-100 dark:border-gray-800 shrink-0">
-				<div class="flex gap-1 p-2 overflow-x-auto scrollbar-hidden">
-					{#each images as img, idx}
-						<button
-							class="shrink-0 w-12 h-12 rounded-md overflow-hidden border-2 transition {idx === currentIndex
-								? 'border-blue-500 ring-1 ring-blue-500/30'
-								: 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'}"
-							on:click={() => goTo(idx)}
-						>
-							<img
-								src={getImageUrl(img)}
-								alt={img.split('/').pop()}
-								class="w-full h-full object-cover"
-								loading="lazy"
-							/>
-						</button>
-					{/each}
+			<!-- Thumbnail strip (only show discovered pages, max 20 visible) -->
+			{#if images.length > 1}
+				<div class="border-t border-gray-100 dark:border-gray-800 shrink-0">
+					<div class="flex gap-1 p-2 overflow-x-auto scrollbar-hidden">
+						{#each images as img, idx}
+							<button
+								class="shrink-0 w-10 h-10 rounded overflow-hidden border-2 transition {idx === currentIndex
+									? 'border-blue-500 ring-1 ring-blue-500/30'
+									: 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'}"
+								on:click={() => goTo(idx)}
+							>
+								<img
+									src={getImageUrl(img)}
+									alt={img.split('/').pop()}
+									class="w-full h-full object-cover"
+									loading="lazy"
+								/>
+							</button>
+						{/each}
+					</div>
 				</div>
-			</div>
+			{/if}
 		{/if}
 	</div>
 {/if}
