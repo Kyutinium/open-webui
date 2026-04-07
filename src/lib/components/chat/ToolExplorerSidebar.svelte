@@ -64,15 +64,16 @@
 
 	$: totalFiltered = filteredCalls.reduce((sum, call) => sum + (call?.results?.length || 0), 0);
 
-	function openThumbnail(thumbnail: string, results: Array<{ thumbnail: string }>) {
-		const thumbs = results.map((r) => r.thumbnail).filter(Boolean);
-		if (thumbs.length > 0) {
-			imageGalleryData.set({
-				images: thumbs,
-				current: thumbnail.split('/').pop() || ''
-			});
-			showImageGallery.set(true);
-		}
+	function openThumbnail(thumbnail: string) {
+		if (!thumbnail) return;
+		// Use folder-based mode: get_image_list will fetch all pages of this document
+		const filename = thumbnail.split('/').pop() || '';
+		const folder = thumbnail.substring(0, thumbnail.lastIndexOf('/')) || '';
+		imageGalleryData.set({
+			folder,
+			current: filename
+		});
+		showImageGallery.set(true);
 	}
 
 	// Friendly tab labels
@@ -189,7 +190,7 @@
 							{#if result.thumbnail}
 								<button
 									class="shrink-0 w-10 h-10 rounded overflow-hidden bg-gray-100 dark:bg-gray-800 cursor-pointer"
-									on:click={() => openThumbnail(result.thumbnail, call.results)}
+									on:click={() => openThumbnail(result.thumbnail)}
 								>
 									<img
 										src={result.thumbnail}
