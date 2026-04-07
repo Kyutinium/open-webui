@@ -147,6 +147,7 @@
 
 	let selectedToolIds = [];
 	let selectedFilterIds = [];
+	let selectedMcpTools: string[] = [];
 	let pendingOAuthTools = [];
 
 	let imageGenerationEnabled = false;
@@ -2272,6 +2273,7 @@
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
+				mcp_tools: selectedMcpTools.length > 0 ? selectedMcpTools : undefined,
 				terminal_id: activeTerminalId ?? undefined,
 				tool_servers: [
 					...($toolServers ?? []).filter(
@@ -2880,6 +2882,7 @@
 									bind:autoScroll
 									bind:selectedToolIds
 									bind:selectedFilterIds
+									bind:selectedMcpTools
 									bind:imageGenerationEnabled
 									bind:codeInterpreterEnabled
 									{pendingOAuthTools}
@@ -2964,6 +2967,7 @@
 									bind:autoScroll
 									bind:selectedToolIds
 									bind:selectedFilterIds
+									bind:selectedMcpTools
 									bind:imageGenerationEnabled
 									bind:codeInterpreterEnabled
 									bind:webSearchEnabled
