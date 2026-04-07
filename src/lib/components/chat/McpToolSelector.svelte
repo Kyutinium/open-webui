@@ -1,9 +1,10 @@
 <script context="module" lang="ts">
-	let _mcpInitialized = false;
+	let _mcpToolsCache: Array<{ id: string; name: string; server: string }> = [];
+	let _mcpDefaultSelection: string[] = [];
 </script>
 
 <script lang="ts">
-	import { onMount, getContext } from 'svelte';
+	import { onMount, onDestroy, getContext } from 'svelte';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
@@ -11,21 +12,33 @@
 
 	export let selectedMcpTools: string[] = [];
 
-	let mcpTools: Array<{ id: string; name: string; server: string }> = [];
+	let mcpTools: Array<{ id: string; name: string; server: string }> = _mcpToolsCache;
 	let showDropdown = false;
-	let loaded = false;
+	let loaded = _mcpToolsCache.length > 0;
+
+	// Restore default selection if parent gives us empty array
+	$: if (loaded && selectedMcpTools.length === 0 && _mcpDefaultSelection.length > 0) {
+		selectedMcpTools = [..._mcpDefaultSelection];
+	}
 
 	onMount(async () => {
+		if (_mcpToolsCache.length > 0) {
+			mcpTools = _mcpToolsCache;
+			loaded = true;
+			return;
+		}
 		try {
 			const resp = await fetch(`${WEBUI_BASE_URL}/api/v1/mcp_tools`, {
 				credentials: 'include'
 			});
 			if (resp.ok) {
 				mcpTools = await resp.json();
-				// Only set defaults on first ever mount, not re-mounts
-				if (!_mcpInitialized && selectedMcpTools.length === 0 && mcpTools.length > 0) {
-					selectedMcpTools = mcpTools.map((t) => t.id);
-					_mcpInitialized = true;
+				_mcpToolsCache = mcpTools;
+				if (mcpTools.length > 0) {
+					_mcpDefaultSelection = mcpTools.map((t) => t.id);
+					if (selectedMcpTools.length === 0) {
+						selectedMcpTools = [..._mcpDefaultSelection];
+					}
 				}
 			}
 		} catch (e) {
@@ -50,6 +63,32 @@
 		}
 	}
 
+	function closeDropdown() {
+		showDropdown = false;
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (!showDropdown) return;
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			closeDropdown();
+		}
+		// Prevent Enter from submitting the chat while dropdown is open
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	}
+
+	onMount(() => {
+		window.addEventListener('keydown', handleKeydown, true);
+	});
+
+	onDestroy(() => {
+		window.removeEventListener('keydown', handleKeydown, true);
+	});
+
 	$: allSelected = mcpTools.length > 0 && selectedMcpTools.length === mcpTools.length;
 	$: someSelected = selectedMcpTools.length > 0 && selectedMcpTools.length < mcpTools.length;
 </script>
@@ -62,7 +101,7 @@
 					? 'text-blue-600 dark:text-blue-400 hover:text-blue-700'
 					: 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}"
 				type="button"
-				on:click={() => (showDropdown = !showDropdown)}
+				on:click|stopPropagation={() => (showDropdown = !showDropdown)}
 			>
 				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="size-4">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.481L15 17.25m-4.5-15H5.625c-.621 0-1.125.504-1.125 1.125v16.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Zm3.75 11.625a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
@@ -77,11 +116,13 @@
 			<!-- svelte-ignore a11y-click-events-have-key-events -->
 			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<div
-				class="fixed inset-0 z-40"
-				on:mousedown={() => (showDropdown = false)}
+				class="fixed inset-0 z-[9999]"
+				on:click|stopPropagation={closeDropdown}
+				on:mousedown|stopPropagation={closeDropdown}
 			/>
 			<div
-				class="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1"
+				class="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-[10000] py-1"
+				on:click|stopPropagation
 				on:mousedown|stopPropagation
 			>
 				<div class="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider">
@@ -91,7 +132,7 @@
 				<!-- Select All -->
 				<button
 					class="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-					on:click={toggleAll}
+					on:click|stopPropagation={toggleAll}
 				>
 					<span class="text-gray-700 dark:text-gray-300 font-medium">{$i18n.t('All')}</span>
 					<div class="w-8 h-4.5 rounded-full transition-colors duration-200 {allSelected ? 'bg-blue-500' : someSelected ? 'bg-blue-300' : 'bg-gray-300 dark:bg-gray-600'} relative">
@@ -106,7 +147,7 @@
 					{@const isOn = selectedMcpTools.includes(tool.id)}
 					<button
 						class="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-						on:click={() => toggleTool(tool.id)}
+						on:click|stopPropagation={() => toggleTool(tool.id)}
 					>
 						<span class="text-gray-700 dark:text-gray-300">{tool.name}</span>
 						<div class="w-8 h-4.5 rounded-full transition-colors duration-200 {isOn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} relative">
