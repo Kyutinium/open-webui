@@ -35,8 +35,6 @@
 	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean }) {
 		const { data, messageDone } = params;
 		if (!data) return;
-		// Only auto-open during streaming (not when loading old messages)
-		if (messageDone) return;
 		const currentChatId = get(chatId);
 		// If chatId changed since last population, reset first
 		if (_toolExplorerChatId && _toolExplorerChatId !== currentChatId) {
