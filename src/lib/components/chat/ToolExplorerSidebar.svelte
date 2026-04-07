@@ -66,16 +66,9 @@
 
 	function openThumbnail(thumbnail: string) {
 		if (!thumbnail) return;
-		// Strip protocol+host to get path only: http://host:port/path/1.png -> /path/1.png
-		let path = thumbnail;
-		try {
-			const url = new URL(thumbnail);
-			path = url.pathname;
-		} catch {
-			// Not a full URL, use as-is
-		}
-		const filename = path.split('/').pop() || '';
-		const folder = path.substring(0, path.lastIndexOf('/')) || '';
+		// Keep full URL: ImageGallerySidebar will parse it to discover sibling pages
+		const filename = thumbnail.split('/').pop() || '';
+		const folder = thumbnail.substring(0, thumbnail.lastIndexOf('/')) || '';
 		imageGalleryData.set({
 			folder,
 			current: filename

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import panzoom, { type PanZoom } from 'panzoom';
-	import { WEBUI_BASE_URL } from '$lib/constants';
 	import { showImageGallery, imageGalleryData } from '$lib/stores';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
@@ -11,7 +10,6 @@
 	let currentIndex = 0;
 	let loading = true;
 	let error = '';
-	let directMode = false;
 
 	let sceneElement: HTMLElement;
 	let instance: PanZoom | null = null;
@@ -23,14 +21,69 @@
 		loadImages();
 	}
 
+	/**
+	 * Parse a thumbnail URL to extract the base pattern and page number.
+	 * e.g. "http://host:port/thumbnails/recn/DOC_ID/page/3.png"
+	 *   -> { base: "http://host:port/thumbnails/recn/DOC_ID/page/", ext: ".png", pageNum: 3 }
+	 */
+	function parsePageUrl(url: string): { base: string; ext: string; pageNum: number } | null {
+		// Match pattern: .../{number}.{ext}
+		const match = url.match(/^(.+\/)(\d+)(\.\w+)$/);
+		if (!match) return null;
+		return { base: match[1], pageNum: parseInt(match[2], 10), ext: match[3] };
+	}
+
+	/**
+	 * Probe image URLs sequentially to discover all pages.
+	 * Starts from page 1 and increments until a 404/error.
+	 */
+	async function probePages(base: string, ext: string, maxPages = 200): Promise<string[]> {
+		const found: string[] = [];
+		// Probe in batches of 5 for speed
+		const batchSize = 5;
+		let start = 1;
+		let done = false;
+
+		while (!done && start <= maxPages) {
+			const batch = Array.from({ length: batchSize }, (_, i) => start + i);
+			const results = await Promise.all(
+				batch.map(async (n) => {
+					const url = `${base}${n}${ext}`;
+					try {
+						const resp = await fetch(url, { method: 'HEAD', mode: 'no-cors' }).catch(() => null);
+						// no-cors returns opaque response; use Image instead
+						return new Promise<{ n: number; url: string; ok: boolean }>((resolve) => {
+							const img = new Image();
+							img.onload = () => resolve({ n, url, ok: true });
+							img.onerror = () => resolve({ n, url, ok: false });
+							img.src = url;
+						});
+					} catch {
+						return { n, url, ok: false };
+					}
+				})
+			);
+
+			for (const r of results) {
+				if (r.ok) {
+					found.push(r.url);
+				} else {
+					done = true;
+					break;
+				}
+			}
+			start += batchSize;
+		}
+		return found;
+	}
+
 	async function loadImages() {
 		loading = true;
 		error = '';
 		currentIndex = 0;
 
-		// Mode 1: Direct image URLs from MCP tool results
+		// Mode 1: Direct image URLs provided
 		if ($imageGalleryData?.images && $imageGalleryData.images.length > 0) {
-			directMode = true;
 			images = $imageGalleryData.images;
 			if (currentFile) {
 				const idx = images.findIndex(
@@ -42,66 +95,39 @@
 			return;
 		}
 
-		// Mode 2: Folder-based listing via image proxy API
-		directMode = false;
-		if (!folder) {
+		// Mode 2: URL pattern-based page discovery
+		// Reconstruct full URL from folder + currentFile
+		const fullUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
+		if (!fullUrl) {
 			loading = false;
 			return;
 		}
-		try {
-			const params = new URLSearchParams({ filename: `${folder}/${currentFile}` });
-			const resp = await fetch(
-				`${WEBUI_BASE_URL}/api/v1/image_proxy/get_image_list?${params}`,
-				{ credentials: 'include' }
-			);
-			if (!resp.ok) throw new Error(`Failed to load image list: ${resp.status}`);
-			const data = await resp.json();
 
-			if (Array.isArray(data)) {
-				images = data;
-			} else if (data?.images) {
-				images = data.images;
-			} else if (data?.data) {
-				images = data.data;
-			} else if (data?.items) {
-				images = data.items;
-			} else {
-				images = [];
-			}
-
-			if (currentFile && images.length > 0) {
-				const idx = images.findIndex(
-					(img) => img === currentFile || img.endsWith('/' + currentFile) || img.includes(currentFile)
-				);
+		const parsed = parsePageUrl(fullUrl);
+		if (parsed) {
+			// Probe all pages in this document
+			const pages = await probePages(parsed.base, parsed.ext);
+			if (pages.length > 0) {
+				images = pages;
+				// Find current page index
+				const idx = pages.findIndex((p) => p.includes(`/${parsed.pageNum}${parsed.ext}`));
 				currentIndex = idx >= 0 ? idx : 0;
-			}
-		} catch (e: any) {
-			// Fallback: if API fails, show the current thumbnail as single image
-			const fallbackUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
-			if (fallbackUrl) {
-				directMode = true;
-				images = [fallbackUrl];
-				currentIndex = 0;
-				error = '';
 			} else {
-				error = e.message || 'Failed to load images';
-				images = [];
+				// Probing failed, show at least the clicked thumbnail
+				images = [fullUrl];
+				currentIndex = 0;
 			}
-		} finally {
-			loading = false;
+		} else {
+			// Not a page-numbered URL, show as single image
+			images = [fullUrl];
+			currentIndex = 0;
 		}
+
+		loading = false;
 	}
 
 	function getImageUrl(imagePath: string): string {
-		// Direct URLs (http/https/data) are used as-is
-		if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
-			return imagePath;
-		}
-		// Folder-based: proxy through open-webui backend
-		const filename = imagePath.split('/').pop() || imagePath;
-		const imageFolder = imagePath.substring(0, imagePath.lastIndexOf('/')) || folder;
-		const params = new URLSearchParams({ filename, folder: imageFolder });
-		return `${WEBUI_BASE_URL}/api/v1/image_proxy/get_image?${params}`;
+		return imagePath;
 	}
 
 	function goTo(index: number) {
