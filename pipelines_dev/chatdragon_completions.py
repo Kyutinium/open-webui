@@ -490,6 +490,13 @@ class Pipeline:
         messages: list,
         body: dict,
     ):
+        try:
+            return self._pipe_inner(user_message, model_id, messages, body)
+        except Exception as e:
+            log.exception("[PIPE] pipe() error: %s", e)
+            return f"Error: {e}"
+
+    def _pipe_inner(self, user_message, model_id, messages, body):
         __user__ = body.get("user", {})
         __user_id__ = __user__.get("id", "")
         __metadata__ = body.get("metadata", {})
