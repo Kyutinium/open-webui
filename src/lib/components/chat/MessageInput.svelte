@@ -80,6 +80,7 @@
 	import GlobeAlt from '../icons/GlobeAlt.svelte';
 	import Photo from '../icons/Photo.svelte';
 	import Wrench from '../icons/Wrench.svelte';
+	import McpToolSelector from './McpToolSelector.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
 
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
@@ -126,6 +127,7 @@
 
 	export let selectedToolIds = [];
 	export let selectedFilterIds = [];
+	export let selectedMcpTools: string[] = [];
 
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
@@ -1682,6 +1684,8 @@
 									{/if}
 
 									<div class="ml-1 flex gap-1.5">
+										<McpToolSelector bind:selectedMcpTools />
+
 										{#if (selectedToolIds ?? []).length > 0}
 											<Tooltip
 												content={$i18n.t('{{COUNT}} Available Tools', {
