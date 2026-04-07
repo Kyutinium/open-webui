@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { decode } from 'html-entities';
 	import { onMount, getContext } from 'svelte';
+	import { get } from 'svelte/store';
 	const i18n = getContext('i18n');
 
 	import fileSaver from 'file-saver';
@@ -26,7 +27,38 @@
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import ColonFenceBlock from './ColonFenceBlock.svelte';
 
-	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData } from '$lib/stores';
+	import { showImageGallery, imageGalleryData, showToolExplorer, toolExplorerData, chatId } from '$lib/stores';
+
+	// Track which chatId the tool explorer was last populated for
+	let _toolExplorerChatId = '';
+
+	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean }) {
+		const { data, messageDone } = params;
+		if (!data) return;
+		const currentChatId = get(chatId);
+		// If chatId changed since last population, reset first
+		if (_toolExplorerChatId && _toolExplorerChatId !== currentChatId) {
+			toolExplorerData.set(null);
+		}
+		_toolExplorerChatId = currentChatId;
+		const existing = get(toolExplorerData);
+		if (existing) {
+			const merged = { ...existing };
+			for (const [key, calls] of Object.entries(data)) {
+				if (!merged[key]) merged[key] = [];
+				for (const call of calls) {
+					const isDup = merged[key].some(
+						(c: any) => c.query === call.query && c.results?.length === call.results?.length
+					);
+					if (!isDup) merged[key] = [...merged[key], call];
+				}
+			}
+			toolExplorerData.set(merged);
+		} else {
+			toolExplorerData.set(data);
+		}
+		showToolExplorer.set(true);
+	}
 
 	export let id: string;
 	export let tokens: Token[];
@@ -423,7 +455,7 @@
 			</div>
 		</ConsecutiveDetailsGroup>
 	{:else if token.type === 'details' && token?.attributes?.type === 'tool_explorer'}
-		<!-- Tool Explorer trigger button -->
+		<!-- Tool Explorer: auto-open sidebar during streaming, no visible UI -->
 		{@const explorerData = (() => {
 			try {
 				const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
@@ -431,53 +463,34 @@
 			} catch { return null; }
 		})()}
 		{#if explorerData}
-			<button
-				class="flex items-center gap-2 px-3 py-2 my-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition text-sm text-gray-700 dark:text-gray-300"
-				on:click={() => {
-					toolExplorerData.set(explorerData);
-					showToolExplorer.set(true);
-				}}
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-4">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.481L15 17.25m-4.5-15H5.625c-.621 0-1.125.504-1.125 1.125v16.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Zm3.75 11.625a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
-				</svg>
-				{$i18n.t('View Tool Results')}
-				<span class="text-xs text-gray-400">
-					({Object.keys(explorerData || {}).length} tools, {Object.values(explorerData || {}).flat().reduce((s, c) => s + (c?.results?.length || 0), 0)} results)
-				</span>
-			</button>
+			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done }} class="hidden" />
+		{/if}
+	{:else if token.type === 'details' && token?.attributes?.type === 'search_results_button'}
+		<!-- Final "검색된 문서 보기" button (only shown after done) -->
+		{#if done}
+			{@const explorerData = (() => {
+				try {
+					const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
+					return JSON.parse(text);
+				} catch { return null; }
+			})()}
+			{#if explorerData}
+				<button
+					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
+					on:click={() => {
+						toolExplorerData.set(explorerData);
+						showToolExplorer.set(true);
+					}}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3">
+						<path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
+					</svg>
+					{$i18n.t('View searched documents')}
+				</button>
+			{/if}
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
-		<!-- Image Gallery trigger button -->
-		{@const galleryImages = (() => {
-			try {
-				const raw = token.attributes?.images ?? '';
-				if (!raw) return undefined;
-				const restored = raw.replace(/\[/g, '<').replace(/\]/g, '>').replace(/\+/g, '&').replace(/'/g, '"');
-				return JSON.parse(restored);
-			} catch { return undefined; }
-		})()}
-		{@const galleryLabel = galleryImages
-			? `${galleryImages.length} images`
-			: token.attributes?.folder?.split('/').pop() ?? ''}
-		<button
-			class="flex items-center gap-2 px-3 py-2 my-1 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition text-sm text-gray-700 dark:text-gray-300"
-			on:click={() => {
-				imageGalleryData.set({
-					folder: token.attributes?.folder ?? '',
-					current: token.attributes?.current ?? '',
-					baseUrl: token.attributes?.base_url ?? '',
-					images: galleryImages
-				});
-				showImageGallery.set(true);
-			}}
-		>
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-4">
-				<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
-			</svg>
-			{$i18n.t('Open Image Gallery')}
-			<span class="text-xs text-gray-400">({galleryLabel})</span>
-		</button>
+		<!-- Image Gallery: no visible button, handled via ToolExplorer thumbnail click -->
 	{:else if token.type === 'details'}
 		{@const textContent = getDetailTextContent(token)}
 

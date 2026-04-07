@@ -37,6 +37,7 @@
 		showArtifacts,
 		showImageGallery,
 		showToolExplorer,
+		toolExplorerData,
 		artifactContents,
 		tools,
 		toolServers,
@@ -710,6 +711,7 @@
 				showEmbeds.set(false);
 				showImageGallery.set(false);
 				showToolExplorer.set(false);
+				toolExplorerData.set(null);
 			}
 		});
 
@@ -723,6 +725,12 @@
 			if (value) {
 				showControls.set(true);
 			}
+		});
+
+		const chatIdSubscribe = chatId.subscribe(() => {
+			// Clear tool explorer data when switching chats
+			toolExplorerData.set(null);
+			showToolExplorer.set(false);
 		});
 
 		const selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
@@ -784,6 +792,7 @@
 				showControlsSubscribe();
 				showImageGallerySubscribe();
 				showToolExplorerSubscribe();
+				chatIdSubscribe();
 				selectedFolderSubscribe();
 				window.removeEventListener('message', onMessageHandler);
 				$socket?.off('events', chatEventHandler);
@@ -1157,6 +1166,7 @@
 		await showArtifacts.set(false);
 		await showImageGallery.set(false);
 		await showToolExplorer.set(false);
+		toolExplorerData.set(null);
 
 		if ($page.url.pathname.includes('/c/')) {
 			window.history.replaceState(history.state, '', `/`);

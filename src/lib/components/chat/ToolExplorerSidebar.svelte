@@ -15,17 +15,25 @@
 
 	export let onClose: () => void = () => {};
 
-	// Tab state
-	let activeTab = '';
+	// Tab state: 'all' + tool tabs
+	let activeTab = 'all';
 	$: tabs = Object.keys(toolData || {});
-	$: if (tabs.length > 0 && !tabs.includes(activeTab)) {
-		activeTab = tabs[0];
-	}
 
-	// Total results count per tab
+	// Total results count
 	function tabCount(tab: string): number {
+		if (tab === 'all') {
+			return Object.values(toolData || {}).flat().reduce((sum, call) => sum + (call?.results?.length || 0), 0);
+		}
 		return (toolData?.[tab] || []).reduce((sum, call) => sum + (call?.results?.length || 0), 0);
 	}
+
+	// All calls across all tabs (for 'all' tab)
+	$: allCalls = Object.entries(toolData || {}).flatMap(([tab, calls]) =>
+		(calls || []).map((call) => ({ ...call, _tab: tab }))
+	);
+
+	// Current calls based on active tab
+	$: currentCalls = activeTab === 'all' ? allCalls : (toolData?.[activeTab] || []);
 
 	// Expand/collapse state for each query
 	let expandedQueries: Record<string, boolean> = {};
@@ -34,33 +42,38 @@
 		expandedQueries[key] = !expandedQueries[key];
 	}
 
-	// Search
+	// Search: searches across ALL tabs regardless of active tab
 	let searchQuery = '';
+	$: isSearching = searchQuery.trim().length > 0;
+	$: searchLower = searchQuery.toLowerCase();
 
-	$: currentCalls = toolData[activeTab] || [];
-	$: filteredCalls = searchQuery.trim()
-		? currentCalls.map((call) => ({
+	// When searching: filter across all calls; when not: use current tab
+	$: filteredCalls = isSearching
+		? allCalls.map((call) => ({
 				...call,
-				results: call.results.filter(
+				results: (call.results || []).filter(
 					(r) =>
-						r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-						r.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-						r.doc_type.toLowerCase().includes(searchQuery.toLowerCase())
+						r.title?.toLowerCase().includes(searchLower) ||
+						r.content?.toLowerCase().includes(searchLower) ||
+						r.doc_type?.toLowerCase().includes(searchLower)
 				)
 			})).filter((call) => call.results.length > 0)
-		: currentCalls;
+		: activeTab === 'all'
+			? allCalls
+			: (toolData?.[activeTab] || []);
 
-	$: totalFiltered = filteredCalls.reduce((sum, call) => sum + call.results.length, 0);
+	$: totalFiltered = filteredCalls.reduce((sum, call) => sum + (call?.results?.length || 0), 0);
 
-	function openThumbnail(thumbnail: string, results: Array<{ thumbnail: string }>) {
-		const thumbs = results.map((r) => r.thumbnail).filter(Boolean);
-		if (thumbs.length > 0) {
-			imageGalleryData.set({
-				images: thumbs,
-				current: thumbnail.split('/').pop() || ''
-			});
-			showImageGallery.set(true);
-		}
+	function openThumbnail(thumbnail: string) {
+		if (!thumbnail) return;
+		// Keep full URL: ImageGallerySidebar will parse it to discover sibling pages
+		const filename = thumbnail.split('/').pop() || '';
+		const folder = thumbnail.substring(0, thumbnail.lastIndexOf('/')) || '';
+		imageGalleryData.set({
+			folder,
+			current: filename
+		});
+		showImageGallery.set(true);
 	}
 
 	// Friendly tab labels
@@ -71,6 +84,7 @@
 			mlm_cql: 'MLM',
 			basic_knowledge: 'Knowledge',
 			cql: 'Confluence',
+			mcp_router: 'Search',
 		};
 		return labels[tab] || tab.charAt(0).toUpperCase() + tab.slice(1);
 	}
@@ -95,9 +109,33 @@
 		</button>
 	</div>
 
+	<!-- Search -->
+	<div class="px-2 py-1.5 shrink-0">
+		<div class="relative">
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
+				<path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
+			</svg>
+			<input
+				type="text"
+				bind:value={searchQuery}
+				placeholder="{$i18n.t('Search all results')}... ({tabCount('all')})"
+				class="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+			/>
+		</div>
+	</div>
+
 	<!-- Tabs -->
-	{#if tabs.length > 1}
-		<div class="flex gap-1 px-2 pt-2 pb-1 overflow-x-auto scrollbar-hidden shrink-0">
+	{#if tabs.length > 0}
+		<div class="flex gap-1 px-2 pb-1.5 overflow-x-auto scrollbar-hidden shrink-0">
+			<button
+				class="px-2.5 py-1 text-xs rounded-lg transition whitespace-nowrap {activeTab === 'all'
+					? 'bg-gray-100 dark:bg-gray-800 font-medium text-gray-900 dark:text-white'
+					: 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}"
+				on:click={() => (activeTab = 'all')}
+			>
+				All
+				<span class="ml-1 text-[10px] opacity-60">({tabCount('all')})</span>
+			</button>
 			{#each tabs as tab}
 				<button
 					class="px-2.5 py-1 text-xs rounded-lg transition whitespace-nowrap {activeTab === tab
@@ -112,31 +150,16 @@
 		</div>
 	{/if}
 
-	<!-- Search -->
-	<div class="px-2 py-1.5 shrink-0">
-		<div class="relative">
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
-				<path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
-			</svg>
-			<input
-				type="text"
-				bind:value={searchQuery}
-				placeholder="{$i18n.t('Search results')}... ({totalFiltered})"
-				class="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-			/>
-		</div>
-	</div>
-
 	<!-- Results -->
 	<div class="flex-1 overflow-y-auto scrollbar-hidden">
 		{#if filteredCalls.length === 0}
 			<div class="flex items-center justify-center h-24 text-xs text-gray-400">
-				{searchQuery ? $i18n.t('No matching results') : $i18n.t('No results')}
+				{isSearching ? $i18n.t('No matching results') : $i18n.t('No results')}
 			</div>
 		{:else}
 			{#each filteredCalls as call, callIdx}
-				{@const queryKey = `${activeTab}-${callIdx}`}
-				{@const isExpanded = expandedQueries[queryKey] !== false}
+				{@const queryKey = `${call._tab || activeTab}-${callIdx}`}
+				{@const isExpanded = isSearching || expandedQueries[queryKey] !== false}
 				<!-- Query row -->
 				<button
 					class="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition"
@@ -151,9 +174,12 @@
 						<path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
 					</svg>
 					<span class="flex-1 text-xs text-gray-700 dark:text-gray-300 truncate font-medium">
-						{call.query || 'Search'}
+						{#if isSearching && call._tab}
+							<span class="text-[9px] px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-400 mr-1">{tabLabel(call._tab)}</span>
+						{/if}
+						<span class="text-gray-400 font-normal">{$i18n.t('Search')}:</span> {call.query || '...'}
 					</span>
-					<span class="text-[10px] text-gray-400 shrink-0">({call.results.length})</span>
+					<span class="text-[10px] text-gray-400 shrink-0">({call.results?.length || 0})</span>
 				</button>
 
 				<!-- Result items -->
@@ -164,7 +190,7 @@
 							{#if result.thumbnail}
 								<button
 									class="shrink-0 w-10 h-10 rounded overflow-hidden bg-gray-100 dark:bg-gray-800 cursor-pointer"
-									on:click={() => openThumbnail(result.thumbnail, call.results)}
+									on:click={() => openThumbnail(result.thumbnail)}
 								>
 									<img
 										src={result.thumbnail}

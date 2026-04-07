@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import panzoom, { type PanZoom } from 'panzoom';
-	import { WEBUI_BASE_URL } from '$lib/constants';
 	import { showImageGallery, imageGalleryData } from '$lib/stores';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
@@ -10,11 +9,51 @@
 	let images: string[] = [];
 	let currentIndex = 0;
 	let loading = true;
-	let error = '';
-	let directMode = false;
+
+	// Page URL pattern state
+	let pageBase = '';
+	let pageExt = '';
+	let minPage = 1;
+	let maxPageFound = 1;
+	let maxPageSearching = false;
+	let patternMode = false;
 
 	let sceneElement: HTMLElement;
 	let instance: PanZoom | null = null;
+	let thumbStrip: HTMLElement;
+
+	// Auto-scroll thumbnail strip to keep current in view
+	$: if (thumbStrip && images.length > 1) {
+		const thumb = thumbStrip.children[currentIndex] as HTMLElement;
+		if (thumb) {
+			thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+		}
+	}
+
+	// Drag-to-scroll for thumbnail strip
+	let isDragging = false;
+	let dragStartX = 0;
+	let dragScrollLeft = 0;
+
+	function onThumbMouseDown(e: MouseEvent) {
+		isDragging = true;
+		dragStartX = e.pageX - thumbStrip.offsetLeft;
+		dragScrollLeft = thumbStrip.scrollLeft;
+		thumbStrip.style.cursor = 'grabbing';
+	}
+
+	function onThumbMouseMove(e: MouseEvent) {
+		if (!isDragging) return;
+		e.preventDefault();
+		const x = e.pageX - thumbStrip.offsetLeft;
+		const walk = (x - dragStartX) * 2;
+		thumbStrip.scrollLeft = dragScrollLeft - walk;
+	}
+
+	function onThumbMouseUp() {
+		isDragging = false;
+		if (thumbStrip) thumbStrip.style.cursor = 'grab';
+	}
 
 	$: folder = $imageGalleryData?.folder ?? '';
 	$: currentFile = $imageGalleryData?.current ?? '';
@@ -23,14 +62,61 @@
 		loadImages();
 	}
 
+	function parsePageUrl(url: string): { base: string; ext: string; pageNum: number } | null {
+		const match = url.match(/^(.+\/)(\d+)(\.\w+)$/);
+		if (!match) return null;
+		return { base: match[1], pageNum: parseInt(match[2], 10), ext: match[3] };
+	}
+
+	function buildPageUrl(n: number): string {
+		return `${pageBase}${n}${pageExt}`;
+	}
+
+	function checkImageExists(url: string): Promise<boolean> {
+		return new Promise((resolve) => {
+			const img = new Image();
+			img.onload = () => resolve(true);
+			img.onerror = () => resolve(false);
+			img.src = url;
+		});
+	}
+
+	async function discoverMaxPage(startFrom: number) {
+		if (maxPageSearching) return;
+		maxPageSearching = true;
+		let n = startFrom;
+		while (true) {
+			const exists = await checkImageExists(buildPageUrl(n + 1));
+			if (exists) {
+				n++;
+				maxPageFound = n;
+				rebuildImageList();
+			} else {
+				break;
+			}
+		}
+		maxPageSearching = false;
+	}
+
+	function rebuildImageList() {
+		const newImages: string[] = [];
+		for (let i = minPage; i <= maxPageFound; i++) {
+			newImages.push(buildPageUrl(i));
+		}
+		images = newImages;
+	}
+
 	async function loadImages() {
 		loading = true;
-		error = '';
 		currentIndex = 0;
+		patternMode = false;
+		pageBase = '';
+		pageExt = '';
+		minPage = 1;
+		maxPageFound = 1;
 
-		// Mode 1: Direct image URLs from MCP tool results
+		// Mode 1: Direct image URLs provided
 		if ($imageGalleryData?.images && $imageGalleryData.images.length > 0) {
-			directMode = true;
 			images = $imageGalleryData.images;
 			if (currentFile) {
 				const idx = images.findIndex(
@@ -42,63 +128,77 @@
 			return;
 		}
 
-		// Mode 2: Folder-based listing via image proxy API
-		directMode = false;
-		if (!folder) {
+		// Mode 2: URL pattern-based lazy loading
+		const fullUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
+		if (!fullUrl) {
+			images = [];
 			loading = false;
 			return;
 		}
-		try {
-			const params = new URLSearchParams({ filename: `${folder}/${currentFile}` });
-			const resp = await fetch(
-				`${WEBUI_BASE_URL}/api/v1/image_proxy/get_image_list?${params}`,
-				{ credentials: 'include' }
-			);
-			if (!resp.ok) throw new Error(`Failed to load image list: ${resp.status}`);
-			const data = await resp.json();
 
-			if (Array.isArray(data)) {
-				images = data;
-			} else if (data?.images) {
-				images = data.images;
-			} else if (data?.data) {
-				images = data.data;
-			} else if (data?.items) {
-				images = data.items;
-			} else {
-				images = [];
-			}
+		const parsed = parsePageUrl(fullUrl);
+		if (parsed) {
+			patternMode = true;
+			pageBase = parsed.base;
+			pageExt = parsed.ext;
+			maxPageFound = parsed.pageNum;
 
-			if (currentFile && images.length > 0) {
-				const idx = images.findIndex(
-					(img) => img === currentFile || img.endsWith('/' + currentFile) || img.includes(currentFile)
-				);
-				currentIndex = idx >= 0 ? idx : 0;
-			}
-		} catch (e: any) {
-			error = e.message || 'Failed to load images';
-			images = [];
-		} finally {
+			// Start with just the clicked page
+			images = [fullUrl];
+			currentIndex = 0;
+			loading = false;
+
+			// Discover nearby pages in background
+			// Check forward
+			discoverMaxPage(parsed.pageNum);
+			// Check backward (find minPage)
+			discoverMinPage(parsed.pageNum);
+		} else {
+			// Not a page-numbered URL, show as single image
+			images = [fullUrl];
+			currentIndex = 0;
 			loading = false;
 		}
 	}
 
-	function getImageUrl(imagePath: string): string {
-		// Direct URLs (http/https/data) are used as-is
-		if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
-			return imagePath;
+	async function discoverMinPage(startFrom: number) {
+		let n = startFrom;
+		while (n > 1) {
+			const exists = await checkImageExists(buildPageUrl(n - 1));
+			if (exists) {
+				n--;
+				minPage = n;
+				rebuildImageList();
+				// Update currentIndex to keep same image selected
+				currentIndex = images.findIndex((img) => img === buildPageUrl(startFrom));
+				if (currentIndex < 0) currentIndex = 0;
+			} else {
+				break;
+			}
 		}
-		// Folder-based: proxy through open-webui backend
-		const filename = imagePath.split('/').pop() || imagePath;
-		const imageFolder = imagePath.substring(0, imagePath.lastIndexOf('/')) || folder;
-		const params = new URLSearchParams({ filename, folder: imageFolder });
-		return `${WEBUI_BASE_URL}/api/v1/image_proxy/get_image?${params}`;
+	}
+
+	async function ensurePageAhead(currentPage: number, ahead: number = 3) {
+		if (!patternMode) return;
+		const target = currentPage + ahead;
+		if (target <= maxPageFound) return;
+		if (maxPageSearching) return;
+		await discoverMaxPage(maxPageFound);
+	}
+
+	function getImageUrl(imagePath: string): string {
+		return imagePath;
 	}
 
 	function goTo(index: number) {
 		if (index < 0 || index >= images.length) return;
 		currentIndex = index;
 		resetZoom();
+		// Pre-fetch ahead when navigating forward
+		if (patternMode) {
+			const currentPage = minPage + index;
+			ensurePageAhead(currentPage);
+		}
 	}
 
 	function prev() {
@@ -152,6 +252,9 @@
 	$: currentImageName = images[currentIndex]
 		? images[currentIndex].split('/').pop()
 		: '';
+	$: pageDisplay = patternMode
+		? `${minPage + currentIndex}`
+		: `${currentIndex + 1}`;
 </script>
 
 {#if $showImageGallery}
@@ -177,10 +280,6 @@
 		{#if loading}
 			<div class="flex-1 flex items-center justify-center">
 				<div class="text-sm text-gray-400">{$i18n.t('Loading')}...</div>
-			</div>
-		{:else if error}
-			<div class="flex-1 flex items-center justify-center p-4">
-				<div class="text-sm text-red-500">{error}</div>
 			</div>
 		{:else if images.length === 0}
 			<div class="flex-1 flex items-center justify-center">
@@ -214,14 +313,14 @@
 					</button>
 
 					<div class="text-xs text-gray-500 dark:text-gray-400 text-center truncate px-2">
-						<span class="font-medium">{currentIndex + 1}</span> / {images.length}
+						<span class="font-medium">p.{pageDisplay}</span> / {images.length}{maxPageSearching ? '+' : ''}
 						<div class="truncate text-[10px] opacity-70 mt-0.5">{currentImageName}</div>
 					</div>
 
 					<button
 						class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-30 disabled:cursor-not-allowed"
 						on:click={next}
-						disabled={currentIndex === images.length - 1}
+						disabled={currentIndex === images.length - 1 && !maxPageSearching}
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
 							<path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
@@ -230,26 +329,36 @@
 				</div>
 			</div>
 
-			<!-- Thumbnail strip -->
-			<div class="border-t border-gray-100 dark:border-gray-800 shrink-0">
-				<div class="flex gap-1 p-2 overflow-x-auto scrollbar-hidden">
-					{#each images as img, idx}
-						<button
-							class="shrink-0 w-12 h-12 rounded-md overflow-hidden border-2 transition {idx === currentIndex
-								? 'border-blue-500 ring-1 ring-blue-500/30'
-								: 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'}"
-							on:click={() => goTo(idx)}
-						>
-							<img
-								src={getImageUrl(img)}
-								alt={img.split('/').pop()}
-								class="w-full h-full object-cover"
-								loading="lazy"
-							/>
-						</button>
-					{/each}
+			<!-- Thumbnail strip (only show discovered pages, max 20 visible) -->
+			{#if images.length > 1}
+				<div class="border-t border-gray-100 dark:border-gray-800 shrink-0">
+					<!-- svelte-ignore a11y-no-static-element-interactions -->
+					<div
+						bind:this={thumbStrip}
+						class="flex gap-1 p-2 overflow-x-auto scrollbar-hidden cursor-grab select-none"
+						on:mousedown={onThumbMouseDown}
+						on:mousemove={onThumbMouseMove}
+						on:mouseup={onThumbMouseUp}
+						on:mouseleave={onThumbMouseUp}
+					>
+						{#each images as img, idx}
+							<button
+								class="shrink-0 w-10 h-10 rounded overflow-hidden border-2 transition {idx === currentIndex
+									? 'border-blue-500 ring-1 ring-blue-500/30'
+									: 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'}"
+								on:click={() => { if (!isDragging) goTo(idx); }}
+							>
+								<img
+									src={getImageUrl(img)}
+									alt={img.split('/').pop()}
+									class="w-full h-full object-cover pointer-events-none"
+									loading="lazy"
+								/>
+							</button>
+						{/each}
+					</div>
 				</div>
-			</div>
+			{/if}
 		{/if}
 	</div>
 {/if}

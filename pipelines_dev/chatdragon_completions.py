@@ -387,6 +387,12 @@ class Pipeline:
             if not isinstance(item, dict):
                 continue
             meta = item.get("metadata") or {}
+            # Skip error results
+            if meta.get("error") or (
+                item.get("content", "").startswith("오류 발생")
+                or item.get("content", "").lower().startswith("error")
+            ):
+                continue
             # URL: try multiple field names and Confluence _links
             url = (
                 meta.get("url") or meta.get("edm_link")
@@ -786,22 +792,44 @@ class Pipeline:
                                             query = orig_args or pending.get("args", "{}")
                                             try:
                                                 q_parsed = json.loads(query)
+                                                # Extract readable search query
                                                 query_str = ""
                                                 for v in q_parsed.values():
                                                     if isinstance(v, str) and len(v) > 2:
                                                         query_str = v
                                                         break
-                                                query = query_str or query
+                                                if query_str:
+                                                    query = query_str
+                                                else:
+                                                    # No obvious string value; show key=value pairs
+                                                    pairs = [
+                                                        f"{k}={v}" for k, v in q_parsed.items()
+                                                        if isinstance(v, (str, int, float)) and str(v).strip()
+                                                    ]
+                                                    query = ", ".join(pairs) if pairs else query
                                             except (json.JSONDecodeError, AttributeError):
                                                 pass
-                                            if label not in tool_explorer_data:
-                                                tool_explorer_data[label] = []
-                                            tool_explorer_data[label].append({
+                                            call_data = {
                                                 "query": query[:200],
                                                 "results": results,
-                                            })
+                                            }
+                                            # Track for dedup
+                                            if label not in tool_explorer_data:
+                                                tool_explorer_data[label] = []
+                                            tool_explorer_data[label].append(call_data)
+                                            # Emit immediately so sidebar updates live
+                                            explorer_tag = self._build_tool_explorer_tag(
+                                                {label: [call_data]}
+                                            )
+                                            if thought_wrapped and not response_tag_sent:
+                                                if text_buffer:
+                                                    yield text_buffer
+                                                    text_buffer = ""
+                                                yield explorer_tag
+                                            else:
+                                                yield explorer_tag
                                             log.info(
-                                                "[PIPE] tool_explorer: %s +%d results",
+                                                "[PIPE] tool_explorer: %s +%d results (live)",
                                                 label, len(results),
                                             )
                                     # (persisted_map entries auto-removed via .pop above)
@@ -884,9 +912,17 @@ class Pipeline:
                         yield text_buffer
                     yield "\n</thought>"
 
-            # Emit tool explorer sidebar for collected MCP results
+            # (tool_explorer tags emitted live during streaming)
+
+            # Emit final "검색된 문서 보기" button with all collected results
             if tool_explorer_data:
-                yield self._build_tool_explorer_tag(tool_explorer_data)
+                body = json.dumps(tool_explorer_data, ensure_ascii=False)
+                yield (
+                    f'\n\n<details type="search_results_button" done="true">\n'
+                    f'<summary>Search Results</summary>\n'
+                    f'{body}\n'
+                    f'</details>\n\n'
+                )
 
             # Emit image gallery for collected MCP thumbnails
             if collected_thumbnails:
