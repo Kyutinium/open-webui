@@ -910,46 +910,45 @@ class Pipeline:
                             full_text_acc += chunk
                             yield chunk
 
+        except GeneratorExit:
+            return
         except Exception as e:
             log.error("Stream error: %s", e)
             yield f"\n\nError: {e}"
-        finally:
-            if thought_wrapped and thought_opened and not response_tag_sent:
-                if not any_tool_used and text_buffer:
-                    # No tools were used and model didn't emit <response> —
-                    # treat the entire content as the response, not thought.
-                    yield "\n</thought>\n\n"
+
+        # Post-stream finalization (NOT in finally — yield is unsafe there)
+        if thought_wrapped and thought_opened and not response_tag_sent:
+            if not any_tool_used and text_buffer:
+                yield "\n</thought>\n\n"
+                full_text_acc += text_buffer
+                yield text_buffer
+            else:
+                if text_buffer:
                     full_text_acc += text_buffer
                     yield text_buffer
-                else:
-                    if text_buffer:
-                        full_text_acc += text_buffer
-                        yield text_buffer
-                    yield "\n</thought>"
+                yield "\n</thought>"
 
-            # (tool_explorer tags emitted live during streaming)
+        # Emit final "검색된 문서 보기" button with all collected results
+        if tool_explorer_data:
+            body = json.dumps(tool_explorer_data, ensure_ascii=False)
+            yield (
+                f'\n\n<details type="search_results_button" done="true">\n'
+                f'<summary>Search Results</summary>\n'
+                f'{body}\n'
+                f'</details>\n\n'
+            )
 
-            # Emit final "검색된 문서 보기" button with all collected results
-            if tool_explorer_data:
-                body = json.dumps(tool_explorer_data, ensure_ascii=False)
-                yield (
-                    f'\n\n<details type="search_results_button" done="true">\n'
-                    f'<summary>Search Results</summary>\n'
-                    f'{body}\n'
-                    f'</details>\n\n'
-                )
+        # Emit image gallery for collected MCP thumbnails
+        if collected_thumbnails:
+            yield self._build_gallery_tag(images=collected_thumbnails)
 
-            # Emit image gallery for collected MCP thumbnails
-            if collected_thumbnails:
-                yield self._build_gallery_tag(images=collected_thumbnails)
-
-            # Emit image gallery tags for any IMAGE_SERVER_BASE URLs found
-            gallery_matches = self._detect_image_gallery_urls(full_text_acc)
-            for match in gallery_matches:
-                yield self._build_gallery_tag(
-                    folder=match["folder"],
-                    current=match["current"],
-                    base_url=match["base_url"],
+        # Emit image gallery tags for any IMAGE_SERVER_BASE URLs found
+        gallery_matches = self._detect_image_gallery_urls(full_text_acc)
+        for match in gallery_matches:
+            yield self._build_gallery_tag(
+                folder=match["folder"],
+                current=match["current"],
+                base_url=match["base_url"],
                 )
 
     def _render_system_event(
