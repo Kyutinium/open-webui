@@ -131,6 +131,7 @@
 
 				<!-- Select All -->
 				<button
+					type="button"
 					class="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
 					on:click|stopPropagation={toggleAll}
 				>
@@ -146,6 +147,7 @@
 				{#each mcpTools as tool}
 					{@const isOn = selectedMcpTools.includes(tool.id)}
 					<button
+						type="button"
 						class="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition"
 						on:click|stopPropagation={() => toggleTool(tool.id)}
 					>
