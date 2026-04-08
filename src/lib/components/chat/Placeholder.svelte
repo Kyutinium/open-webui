@@ -47,6 +47,7 @@
 
 	export let selectedToolIds = [];
 	export let selectedFilterIds = [];
+	export let selectedMcpTools: string[] = [];
 	export let pendingOAuthTools = [];
 
 	export let showCommands = false;
@@ -213,6 +214,7 @@
 					bind:autoScroll
 					bind:selectedToolIds
 					bind:selectedFilterIds
+					bind:selectedMcpTools
 					bind:imageGenerationEnabled
 					bind:codeInterpreterEnabled
 					bind:webSearchEnabled
