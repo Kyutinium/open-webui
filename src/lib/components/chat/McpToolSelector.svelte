@@ -17,10 +17,6 @@
 	let mcpTools: Array<{ id: string; name: string; server: string }> = _mcpToolsCache;
 	let loaded = _mcpToolsCache.length > 0;
 
-	$: if (loaded && selectedMcpTools.length === 0 && _mcpDefaultSelection.length > 0) {
-		selectedMcpTools = [..._mcpDefaultSelection];
-	}
-
 	onMount(async () => {
 		if (_mcpToolsCache.length > 0) {
 			mcpTools = _mcpToolsCache;
