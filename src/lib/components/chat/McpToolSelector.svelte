@@ -1,6 +1,7 @@
 <script context="module" lang="ts">
 	let _mcpToolsCache: Array<{ id: string; name: string; server: string }> = [];
 	let _mcpDefaultSelection: string[] = [];
+	let _mcpLastSelection: string[] | null = null;
 </script>
 
 <script lang="ts">
@@ -18,6 +19,10 @@
 	let loaded = _mcpToolsCache.length > 0;
 
 	onMount(async () => {
+		// Restore last selection on re-mount (chat switch)
+		if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
+			selectedMcpTools = [..._mcpLastSelection];
+		}
 		if (_mcpToolsCache.length > 0) {
 			mcpTools = _mcpToolsCache;
 			loaded = true;
@@ -49,6 +54,7 @@
 		} else {
 			selectedMcpTools = [...selectedMcpTools, id];
 		}
+		_mcpLastSelection = [...selectedMcpTools];
 	}
 
 	function toggleAll() {
@@ -57,6 +63,7 @@
 		} else {
 			selectedMcpTools = mcpTools.map((t) => t.id);
 		}
+		_mcpLastSelection = [...selectedMcpTools];
 	}
 
 	$: allSelected = mcpTools.length > 0 && selectedMcpTools.length === mcpTools.length;
