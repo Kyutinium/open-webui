@@ -107,7 +107,6 @@
 
 				<!-- Individual tools -->
 				{#each mcpTools as tool}
-					{@const isOn = selectedMcpTools.includes(tool.id)}
 					<button
 						type="button"
 						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
@@ -115,7 +114,13 @@
 					>
 						<div class="line-clamp-1 text-xs">{tool.name}</div>
 						<div class="shrink-0">
-							<Switch state={isOn} on:change={async () => { await tick(); }} />
+							<Switch
+								state={selectedMcpTools.includes(tool.id)}
+								on:change={async (e) => {
+									const state = e.detail;
+									await tick();
+								}}
+							/>
 						</div>
 					</button>
 				{/each}
