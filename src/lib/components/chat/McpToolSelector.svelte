@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-	import { onMount, getContext } from 'svelte';
+	import { onMount, getContext, tick } from 'svelte';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -98,7 +98,9 @@
 					on:click={toggleAll}
 				>
 					<div class="line-clamp-1 text-xs">{$i18n.t('All')}</div>
-					<Switch state={allSelected} on:change={toggleAll} />
+					<div class="shrink-0">
+						<Switch state={allSelected} on:change={async () => { await tick(); }} />
+					</div>
 				</button>
 
 				<hr class="border-gray-50 dark:border-gray-800 mx-2 my-0.5" />
@@ -112,7 +114,9 @@
 						on:click={() => toggleTool(tool.id)}
 					>
 						<div class="line-clamp-1 text-xs">{tool.name}</div>
-						<Switch state={isOn} on:change={() => toggleTool(tool.id)} />
+						<div class="shrink-0">
+							<Switch state={isOn} on:change={async () => { await tick(); }} />
+						</div>
 					</button>
 				{/each}
 			</div>
