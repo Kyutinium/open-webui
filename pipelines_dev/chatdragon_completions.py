@@ -500,9 +500,9 @@ class Pipeline:
         extra_headers: dict = {}
 
         dscrowd_token = meta_headers.get("x-cookie-dscrowd.token_key", "")
-        # Also check confluence_token from frontend auth flow
+        # Also check confluence_session_cookie from frontend auth flow
         if not dscrowd_token:
-            dscrowd_token = body.get("confluence_token") or __metadata__.get("confluence_token") or ""
+            dscrowd_token = body.get("confluence_session_cookie") or __metadata__.get("confluence_session_cookie") or ""
         if dscrowd_token:
             extra_headers["X-Cookie-dscrowd.token_key"] = dscrowd_token
             log.info("[PIPE] dscrowd_token: present (len=%d)", len(dscrowd_token))

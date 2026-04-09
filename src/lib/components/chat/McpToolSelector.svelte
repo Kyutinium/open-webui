@@ -16,7 +16,7 @@
 	const i18n = getContext('i18n');
 
 	export let selectedMcpTools: string[] = [];
-	export let confluenceToken: string = '';
+	export let confluenceSessionCookie: string = '';
 
 	let mcpTools: Array<{ id: string; name: string; server: string; requires_confluence_auth?: boolean }> = _mcpToolsCache;
 	let loaded = _mcpToolsCache.length > 0;
@@ -92,7 +92,7 @@
 				const data = await resp.json();
 				if (data.authenticated && data.token) {
 					_confluenceAuthenticated = true;
-					confluenceToken = data.token;
+					confluenceSessionCookie = data.token;
 					return true;
 				}
 			}
@@ -100,7 +100,7 @@
 			console.error('Confluence auth check failed:', e);
 		}
 		_confluenceAuthenticated = false;
-		confluenceToken = '';
+		confluenceSessionCookie = '';
 		return false;
 	}
 
