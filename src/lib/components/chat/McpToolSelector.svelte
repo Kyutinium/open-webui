@@ -79,7 +79,13 @@
 
 		// Check confluence auth on mount
 		if (!_confluenceAuthenticated) {
-			await checkConfluenceAuth();
+			const authed = await checkConfluenceAuth();
+			if (!authed && hasAnyConfluenceToolSelected()) {
+				// Remove confluence tools if not authenticated
+				selectedMcpTools = selectedMcpTools.filter((id) => !needsConfluenceAuth(id));
+				_mcpLastSelection = [...selectedMcpTools];
+				saveSelection();
+			}
 		}
 	});
 
