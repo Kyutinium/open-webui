@@ -223,7 +223,7 @@
 					class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 					on:click={toggleAll}
 				>
-					<div class="line-clamp-1 text-xs">{$i18n.t('All')}</div>
+					<div class="line-clamp-1 text-xs text-left">{$i18n.t('All')}</div>
 					<div class="shrink-0">
 						<Switch state={allSelected} on:change={async () => { await tick(); }} />
 					</div>
@@ -238,7 +238,7 @@
 						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 						on:click={() => toggleTool(tool.id)}
 					>
-						<div class="flex items-center gap-1.5 line-clamp-1 text-xs">
+						<div class="flex items-center gap-1.5 line-clamp-1 text-xs text-left flex-1">
 							{tool.name}
 							{#if tool.requires_confluence_auth && !_confluenceAuthenticated}
 								<span class="text-[9px] text-amber-500" title="Login required">*</span>
