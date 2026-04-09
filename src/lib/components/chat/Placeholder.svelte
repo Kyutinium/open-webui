@@ -48,6 +48,7 @@
 	export let selectedToolIds = [];
 	export let selectedFilterIds = [];
 	export let selectedMcpTools: string[] = [];
+	export let confluenceToken: string = '';
 	export let pendingOAuthTools = [];
 
 	export let showCommands = false;
@@ -215,6 +216,7 @@
 					bind:selectedToolIds
 					bind:selectedFilterIds
 					bind:selectedMcpTools
+					bind:confluenceToken
 					bind:imageGenerationEnabled
 					bind:codeInterpreterEnabled
 					bind:webSearchEnabled

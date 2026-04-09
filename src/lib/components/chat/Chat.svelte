@@ -148,6 +148,7 @@
 	let selectedToolIds = [];
 	let selectedFilterIds = [];
 	let selectedMcpTools: string[] = [];
+	let confluenceToken: string = '';
 	let pendingOAuthTools = [];
 
 	let imageGenerationEnabled = false;
@@ -2274,6 +2275,7 @@
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
 				mcp_tools: selectedMcpTools.length > 0 ? selectedMcpTools : undefined,
+				confluence_token: confluenceToken || undefined,
 				terminal_id: activeTerminalId ?? undefined,
 				tool_servers: [
 					...($toolServers ?? []).filter(
@@ -2883,6 +2885,7 @@
 									bind:selectedToolIds
 									bind:selectedFilterIds
 									bind:selectedMcpTools
+									bind:confluenceToken
 									bind:imageGenerationEnabled
 									bind:codeInterpreterEnabled
 									{pendingOAuthTools}
@@ -2969,6 +2972,7 @@
 									bind:selectedFilterIds
 									bind:selectedMcpTools
 									bind:imageGenerationEnabled
+									bind:confluenceToken
 									bind:codeInterpreterEnabled
 									bind:webSearchEnabled
 									bind:atSelectedModel

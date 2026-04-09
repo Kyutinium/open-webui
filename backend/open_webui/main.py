@@ -74,6 +74,7 @@ from open_webui.routers import (
     images,
     image_proxy,
     mcp_tools,
+    confluence_auth,
     ollama,
     openai,
     retrieval,
@@ -1495,6 +1496,7 @@ app.include_router(tasks.router, prefix='/api/v1/tasks', tags=['tasks'])
 app.include_router(images.router, prefix='/api/v1/images', tags=['images'])
 app.include_router(image_proxy.router, prefix='/api/v1/image_proxy', tags=['image_proxy'])
 app.include_router(mcp_tools.router, prefix='/api/v1', tags=['mcp_tools'])
+app.include_router(confluence_auth.router, prefix='/api/v1', tags=['confluence_auth'])
 
 app.include_router(audio.router, prefix='/api/v1/audio', tags=['audio'])
 app.include_router(retrieval.router, prefix='/api/v1/retrieval', tags=['retrieval'])

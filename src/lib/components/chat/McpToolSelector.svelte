@@ -1,7 +1,8 @@
 <script context="module" lang="ts">
-	let _mcpToolsCache: Array<{ id: string; name: string; server: string }> = [];
+	let _mcpToolsCache: Array<{ id: string; name: string; server: string; requires_confluence_auth?: boolean }> = [];
 	let _mcpDefaultSelection: string[] = [];
 	let _mcpLastSelection: string[] | null = null;
+	let _confluenceAuthenticated = false;
 </script>
 
 <script lang="ts">
@@ -14,54 +15,150 @@
 	const i18n = getContext('i18n');
 
 	export let selectedMcpTools: string[] = [];
+	export let confluenceToken: string = '';
 
-	let mcpTools: Array<{ id: string; name: string; server: string }> = _mcpToolsCache;
+	let mcpTools: Array<{ id: string; name: string; server: string; requires_confluence_auth?: boolean }> = _mcpToolsCache;
 	let loaded = _mcpToolsCache.length > 0;
+	let checkingAuth = false;
 
 	onMount(async () => {
-		// Restore last selection on re-mount (chat switch)
 		if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
 			selectedMcpTools = [..._mcpLastSelection];
 		}
 		if (_mcpToolsCache.length > 0) {
 			mcpTools = _mcpToolsCache;
 			loaded = true;
-			return;
+		} else {
+			try {
+				const resp = await fetch(`${WEBUI_BASE_URL}/api/v1/mcp_tools`, {
+					credentials: 'include'
+				});
+				if (resp.ok) {
+					mcpTools = await resp.json();
+					_mcpToolsCache = mcpTools;
+					if (mcpTools.length > 0) {
+						_mcpDefaultSelection = mcpTools.map((t) => t.id);
+						if (selectedMcpTools.length === 0) {
+							selectedMcpTools = [..._mcpDefaultSelection];
+						}
+					}
+				}
+			} catch (e) {
+				console.error('Failed to load MCP tools:', e);
+			}
+			loaded = true;
 		}
+		// Check confluence auth on mount
+		if (!_confluenceAuthenticated) {
+			await checkConfluenceAuth();
+		} else {
+			confluenceToken = confluenceToken || '';
+		}
+	});
+
+	async function checkConfluenceAuth(): Promise<boolean> {
 		try {
-			const resp = await fetch(`${WEBUI_BASE_URL}/api/v1/mcp_tools`, {
+			const resp = await fetch(`${WEBUI_BASE_URL}/api/v1/confluence/check`, {
 				credentials: 'include'
 			});
 			if (resp.ok) {
-				mcpTools = await resp.json();
-				_mcpToolsCache = mcpTools;
-				if (mcpTools.length > 0) {
-					_mcpDefaultSelection = mcpTools.map((t) => t.id);
-					if (selectedMcpTools.length === 0) {
-						selectedMcpTools = [..._mcpDefaultSelection];
-					}
+				const data = await resp.json();
+				if (data.authenticated && data.token) {
+					_confluenceAuthenticated = true;
+					confluenceToken = data.token;
+					return true;
 				}
 			}
 		} catch (e) {
-			console.error('Failed to load MCP tools:', e);
+			console.error('Confluence auth check failed:', e);
 		}
-		loaded = true;
-	});
+		_confluenceAuthenticated = false;
+		confluenceToken = '';
+		return false;
+	}
 
-	function toggleTool(id: string) {
+	function needsConfluenceAuth(toolId: string): boolean {
+		const tool = mcpTools.find((t) => t.id === toolId);
+		return tool?.requires_confluence_auth === true;
+	}
+
+	function hasAnyConfluenceToolSelected(): boolean {
+		return selectedMcpTools.some((id) => needsConfluenceAuth(id));
+	}
+
+	async function openConfluenceLogin() {
+		checkingAuth = true;
+		// Open confluence login in popup
+		const loginUrl = `${await getLoginUrl()}`;
+		const popup = window.open(loginUrl, 'confluence_login', 'width=600,height=700');
+
+		// Poll for login completion
+		const pollInterval = setInterval(async () => {
+			// Check if popup was closed
+			if (popup && popup.closed) {
+				clearInterval(pollInterval);
+				const success = await checkConfluenceAuth();
+				checkingAuth = false;
+				if (!success) {
+					// Remove confluence tools from selection if auth failed
+					selectedMcpTools = selectedMcpTools.filter((id) => !needsConfluenceAuth(id));
+					_mcpLastSelection = [...selectedMcpTools];
+				}
+				return;
+			}
+			// Also check periodically in case cookie was set
+			const success = await checkConfluenceAuth();
+			if (success) {
+				clearInterval(pollInterval);
+				checkingAuth = false;
+				if (popup && !popup.closed) popup.close();
+			}
+		}, 2000);
+
+		// Timeout after 5 minutes
+		setTimeout(() => {
+			clearInterval(pollInterval);
+			checkingAuth = false;
+		}, 300000);
+	}
+
+	async function getLoginUrl(): Promise<string> {
+		try {
+			const resp = await fetch(`${WEBUI_BASE_URL}/api/v1/confluence/check`, {
+				credentials: 'include'
+			});
+			if (resp.ok) {
+				const data = await resp.json();
+				return data.login_url || 'https://confluence.gwanghands.net/login.action';
+			}
+		} catch {}
+		return 'https://confluence.gwandhands.net/login.action';
+	}
+
+	async function toggleTool(id: string) {
 		if (selectedMcpTools.includes(id)) {
 			selectedMcpTools = selectedMcpTools.filter((t) => t !== id);
 		} else {
-			selectedMcpTools = [...selectedMcpTools, id];
+			// If enabling a confluence tool, check auth first
+			if (needsConfluenceAuth(id) && !_confluenceAuthenticated) {
+				selectedMcpTools = [...selectedMcpTools, id];
+				await openConfluenceLogin();
+			} else {
+				selectedMcpTools = [...selectedMcpTools, id];
+			}
 		}
 		_mcpLastSelection = [...selectedMcpTools];
 	}
 
-	function toggleAll() {
+	async function toggleAll() {
 		if (selectedMcpTools.length === mcpTools.length) {
 			selectedMcpTools = [];
 		} else {
 			selectedMcpTools = mcpTools.map((t) => t.id);
+			// Check if any confluence tools need auth
+			if (hasAnyConfluenceToolSelected() && !_confluenceAuthenticated) {
+				await openConfluenceLogin();
+			}
 		}
 		_mcpLastSelection = [...selectedMcpTools];
 	}
@@ -115,18 +212,35 @@
 						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
 						on:click={() => toggleTool(tool.id)}
 					>
-						<div class="line-clamp-1 text-xs">{tool.name}</div>
+						<div class="flex items-center gap-1.5 line-clamp-1 text-xs">
+							{tool.name}
+							{#if tool.requires_confluence_auth && !_confluenceAuthenticated}
+								<span class="text-[9px] text-amber-500" title="Login required">*</span>
+							{/if}
+						</div>
 						<div class="shrink-0">
-							<Switch
-								state={selectedMcpTools.includes(tool.id)}
-								on:change={async (e) => {
-									const state = e.detail;
-									await tick();
-								}}
-							/>
+							{#if checkingAuth && needsConfluenceAuth(tool.id)}
+								<div class="w-8 flex justify-center">
+									<div class="size-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+								</div>
+							{:else}
+								<Switch
+									state={selectedMcpTools.includes(tool.id)}
+									on:change={async (e) => {
+										const state = e.detail;
+										await tick();
+									}}
+								/>
+							{/if}
 						</div>
 					</button>
 				{/each}
+
+				{#if checkingAuth}
+					<div class="px-3 py-1.5 text-[10px] text-amber-500">
+						Confluence login in progress...
+					</div>
+				{/if}
 			</div>
 		</div>
 	</Dropdown>

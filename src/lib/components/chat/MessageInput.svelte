@@ -128,6 +128,7 @@
 	export let selectedToolIds = [];
 	export let selectedFilterIds = [];
 	export let selectedMcpTools: string[] = [];
+	export let confluenceToken: string = '';
 
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
@@ -1684,7 +1685,7 @@
 									{/if}
 
 									<div class="ml-1 flex gap-1.5">
-										<McpToolSelector bind:selectedMcpTools />
+										<McpToolSelector bind:selectedMcpTools bind:confluenceToken />
 
 										{#if (selectedToolIds ?? []).length > 0}
 											<Tooltip
