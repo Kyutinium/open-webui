@@ -23,7 +23,11 @@
 	let thumbStrip: HTMLElement;
 
 	// Auto-scroll thumbnail strip to keep current in view
-	$: if (thumbStrip && images.length > 1) {
+	// (suppressed during/after user drag interaction)
+	let userScrolling = false;
+	let userScrollTimer: ReturnType<typeof setTimeout>;
+
+	$: if (thumbStrip && images.length > 1 && !userScrolling) {
 		const thumb = thumbStrip.children[currentIndex] as HTMLElement;
 		if (thumb) {
 			thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
@@ -37,6 +41,8 @@
 
 	function onThumbMouseDown(e: MouseEvent) {
 		isDragging = true;
+		userScrolling = true;
+		clearTimeout(userScrollTimer);
 		dragStartX = e.pageX - thumbStrip.offsetLeft;
 		dragScrollLeft = thumbStrip.scrollLeft;
 		thumbStrip.style.cursor = 'grabbing';
@@ -53,6 +59,8 @@
 	function onThumbMouseUp() {
 		isDragging = false;
 		if (thumbStrip) thumbStrip.style.cursor = 'grab';
+		// Keep userScrolling true for a bit so auto-scroll doesn't snap back
+		userScrollTimer = setTimeout(() => { userScrolling = false; }, 2000);
 	}
 
 	$: folder = $imageGalleryData?.folder ?? '';

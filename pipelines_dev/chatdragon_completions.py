@@ -500,8 +500,14 @@ class Pipeline:
         extra_headers: dict = {}
 
         dscrowd_token = meta_headers.get("x-cookie-dscrowd.token_key", "")
+        # Also check confluence_session_cookie from frontend auth flow
+        if not dscrowd_token:
+            dscrowd_token = body.get("confluence_session_cookie") or __metadata__.get("confluence_session_cookie") or ""
         if dscrowd_token:
             extra_headers["X-Cookie-dscrowd.token_key"] = dscrowd_token
+            log.info("[PIPE] dscrowd_token: present (len=%d)", len(dscrowd_token))
+        else:
+            log.info("[PIPE] dscrowd_token: NOT FOUND")
 
         owui_username = meta_headers.get("x-openwebui-user-name", "")
         if not owui_username and __user__:
@@ -631,6 +637,13 @@ class Pipeline:
         }
         if chat_id:
             payload["session_id"] = chat_id
+
+        # Pass selected MCP tools to gateway as allowed_tools
+        mcp_tools = body.get("mcp_tools") or __metadata__.get("mcp_tools")
+        if mcp_tools and isinstance(mcp_tools, list):
+            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill"]
+            payload["allowed_tools"] = base_tools + mcp_tools
+            log.info("[PIPE] allowed_tools: %s", payload["allowed_tools"])
 
         if use_stream:
             return self._stream(payload, __task__)

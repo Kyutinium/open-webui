@@ -6,6 +6,7 @@ services:
     container_name: open-webui
     volumes:
       - open-webui:/app/backend/data
+      - /path/to/mcp-config.json:/app/mcp-config.json:ro
     ports:
       - "3000:8080"
     env_file:
