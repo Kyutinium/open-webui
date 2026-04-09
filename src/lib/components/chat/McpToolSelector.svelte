@@ -3,6 +3,7 @@
 	let _mcpDefaultSelection: string[] = [];
 	let _mcpLastSelection: string[] | null = null;
 	let _confluenceAuthenticated = false;
+	let _localStorageLoaded = false;
 </script>
 
 <script lang="ts">
@@ -21,10 +22,36 @@
 	let loaded = _mcpToolsCache.length > 0;
 	let checkingAuth = false;
 
+	// Load/save selection from localStorage (per-user persistence)
+	function saveSelection() {
+		try {
+			localStorage.setItem('mcpToolSelection', JSON.stringify(selectedMcpTools));
+		} catch {}
+	}
+
+	function loadSelection(): string[] | null {
+		try {
+			const saved = localStorage.getItem('mcpToolSelection');
+			if (saved) return JSON.parse(saved);
+		} catch {}
+		return null;
+	}
+
 	onMount(async () => {
-		if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
+		// Restore from localStorage first, then module cache
+		if (!_localStorageLoaded) {
+			const saved = loadSelection();
+			if (saved !== null && saved.length > 0) {
+				selectedMcpTools = saved;
+				_mcpLastSelection = saved;
+			} else if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
+				selectedMcpTools = [..._mcpLastSelection];
+			}
+			_localStorageLoaded = true;
+		} else if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
 			selectedMcpTools = [..._mcpLastSelection];
 		}
+
 		if (_mcpToolsCache.length > 0) {
 			mcpTools = _mcpToolsCache;
 			loaded = true;
@@ -40,6 +67,7 @@
 						_mcpDefaultSelection = mcpTools.map((t) => t.id);
 						if (selectedMcpTools.length === 0) {
 							selectedMcpTools = [..._mcpDefaultSelection];
+							saveSelection();
 						}
 					}
 				}
@@ -48,11 +76,10 @@
 			}
 			loaded = true;
 		}
+
 		// Check confluence auth on mount
 		if (!_confluenceAuthenticated) {
 			await checkConfluenceAuth();
-		} else {
-			confluenceToken = confluenceToken || '';
 		}
 	});
 
@@ -88,25 +115,21 @@
 
 	async function openConfluenceLogin() {
 		checkingAuth = true;
-		// Open confluence login in popup
 		const loginUrl = `${await getLoginUrl()}`;
 		const popup = window.open(loginUrl, 'confluence_login', 'width=600,height=700');
 
-		// Poll for login completion
 		const pollInterval = setInterval(async () => {
-			// Check if popup was closed
 			if (popup && popup.closed) {
 				clearInterval(pollInterval);
 				const success = await checkConfluenceAuth();
 				checkingAuth = false;
 				if (!success) {
-					// Remove confluence tools from selection if auth failed
 					selectedMcpTools = selectedMcpTools.filter((id) => !needsConfluenceAuth(id));
 					_mcpLastSelection = [...selectedMcpTools];
+					saveSelection();
 				}
 				return;
 			}
-			// Also check periodically in case cookie was set
 			const success = await checkConfluenceAuth();
 			if (success) {
 				clearInterval(pollInterval);
@@ -115,7 +138,6 @@
 			}
 		}, 2000);
 
-		// Timeout after 5 minutes
 		setTimeout(() => {
 			clearInterval(pollInterval);
 			checkingAuth = false;
@@ -132,14 +154,13 @@
 				return data.login_url || 'https://confluence.gwanghands.net/login.action';
 			}
 		} catch {}
-		return 'https://confluence.gwandhands.net/login.action';
+		return 'https://confluence.gwanghands.net/login.action';
 	}
 
 	async function toggleTool(id: string) {
 		if (selectedMcpTools.includes(id)) {
 			selectedMcpTools = selectedMcpTools.filter((t) => t !== id);
 		} else {
-			// If enabling a confluence tool, check auth first
 			if (needsConfluenceAuth(id) && !_confluenceAuthenticated) {
 				selectedMcpTools = [...selectedMcpTools, id];
 				await openConfluenceLogin();
@@ -148,6 +169,7 @@
 			}
 		}
 		_mcpLastSelection = [...selectedMcpTools];
+		saveSelection();
 	}
 
 	async function toggleAll() {
@@ -155,35 +177,36 @@
 			selectedMcpTools = [];
 		} else {
 			selectedMcpTools = mcpTools.map((t) => t.id);
-			// Check if any confluence tools need auth
 			if (hasAnyConfluenceToolSelected() && !_confluenceAuthenticated) {
 				await openConfluenceLogin();
 			}
 		}
 		_mcpLastSelection = [...selectedMcpTools];
+		saveSelection();
 	}
 
 	$: allSelected = mcpTools.length > 0 && selectedMcpTools.length === mcpTools.length;
 	$: someSelected = selectedMcpTools.length > 0 && selectedMcpTools.length < mcpTools.length;
+	$: noneSelected = selectedMcpTools.length === 0;
 </script>
 
 {#if loaded && mcpTools.length > 0}
 	<Dropdown side="top" align="start">
-		<Tooltip content={$i18n.t('Search Tools')} placement="top">
-			<button
-				class="translate-y-[0.5px] px-1 flex gap-1 items-center rounded-lg self-center transition {selectedMcpTools.length > 0
-					? 'text-blue-600 dark:text-blue-400 hover:text-blue-700'
-					: 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}"
-				type="button"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="size-4">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.481L15 17.25m-4.5-15H5.625c-.621 0-1.125.504-1.125 1.125v16.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Zm3.75 11.625a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
-				</svg>
-				{#if someSelected}
-					<span class="text-xs">{selectedMcpTools.length}</span>
-				{/if}
-			</button>
-		</Tooltip>
+		<button
+			class="flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs transition
+				{noneSelected
+					? 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+					: 'text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300'}"
+			type="button"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5">
+				<path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
+			</svg>
+			{$i18n.t('Search Tools')}
+			{#if someSelected}
+				<span class="opacity-60">({selectedMcpTools.length})</span>
+			{/if}
+		</button>
 
 		<div slot="content">
 			<div class="min-w-52 max-w-60 rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg max-h-72 overflow-y-auto scrollbar-thin">
