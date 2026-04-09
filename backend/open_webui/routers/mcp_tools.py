@@ -45,10 +45,8 @@ def _load_mcp_tools() -> list[dict]:
         display = config.get("description", "")
         if not display:
             display = name.replace("-", " ").replace("_", " ").title()
-        # Auth requirement: check for requires_auth flag or confluence-related tools
+        # Auth requirement: only use explicit requires_auth flag from config
         requires_auth = config.get("requires_auth", False)
-        if not requires_auth and ("confluence" in display.lower() or "cql" in name.lower()):
-            requires_auth = True
         tools.append({
             "id": pattern,
             "name": display,
