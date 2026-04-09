@@ -505,6 +505,9 @@ class Pipeline:
             dscrowd_token = body.get("confluence_token") or __metadata__.get("confluence_token") or ""
         if dscrowd_token:
             extra_headers["X-Cookie-dscrowd.token_key"] = dscrowd_token
+            log.info("[PIPE] dscrowd_token: present (len=%d)", len(dscrowd_token))
+        else:
+            log.info("[PIPE] dscrowd_token: NOT FOUND")
 
         owui_username = meta_headers.get("x-openwebui-user-name", "")
         if not owui_username and __user__:
