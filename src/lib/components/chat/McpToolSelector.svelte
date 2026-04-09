@@ -81,10 +81,7 @@
 		if (!_confluenceAuthenticated) {
 			const authed = await checkConfluenceAuth();
 			if (!authed && hasAnyConfluenceToolSelected()) {
-				// Remove confluence tools if not authenticated
-				selectedMcpTools = selectedMcpTools.filter((id) => !needsConfluenceAuth(id));
-				_mcpLastSelection = [...selectedMcpTools];
-				saveSelection();
+				await openConfluenceLogin();
 			}
 		}
 	});
