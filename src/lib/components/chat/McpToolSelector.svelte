@@ -93,9 +93,8 @@
 			});
 			if (resp.ok) {
 				const data = await resp.json();
-				if (data.authenticated && data.token) {
+				if (data.authenticated) {
 					_confluenceAuthenticated = true;
-					confluenceSessionCookie = data.token;
 					return true;
 				}
 			}

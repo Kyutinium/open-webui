@@ -2451,6 +2451,14 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         'terminal_id': terminal_id,
         'files': files,
     }
+
+    # Forward Confluence session cookie to pipe via metadata
+    dscrowd_cookie = request.cookies.get("dscrowd.token_key", "")
+    if dscrowd_cookie:
+        if 'headers' not in metadata:
+            metadata['headers'] = {}
+        metadata['headers']['x-cookie-dscrowd.token_key'] = dscrowd_cookie
+
     form_data['metadata'] = metadata
 
     # When the caller provides an explicit OpenAI-style `tools` array in the

@@ -31,7 +31,6 @@ async def check_confluence_token(request: Request):
     if token:
         return JSONResponse(content={
             "authenticated": True,
-            "token": token,
         })
     else:
         return JSONResponse(content={

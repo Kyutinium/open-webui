@@ -495,19 +495,12 @@ class Pipeline:
         __metadata__ = body.get("metadata", {})
         __task__ = __metadata__.get("task")
 
-        # Debug: check if confluence cookie arrived
-        _dbg_cookie = body.get("confluence_session_cookie", "MISSING_FROM_BODY")
-        _dbg_meta_cookie = __metadata__.get("confluence_session_cookie", "MISSING_FROM_META")
-        log.info("[PIPE-DEBUG] confluence_session_cookie body=%s meta=%s", _dbg_cookie[:30], _dbg_meta_cookie[:30])
 
         meta_headers = __metadata__.get("headers", {})
 
         extra_headers: dict = {}
 
         dscrowd_token = meta_headers.get("x-cookie-dscrowd.token_key", "")
-        # Also check confluence_session_cookie from frontend auth flow
-        if not dscrowd_token:
-            dscrowd_token = body.get("confluence_session_cookie") or __metadata__.get("confluence_session_cookie") or ""
         if dscrowd_token:
             extra_headers["X-Cookie-dscrowd.token_key"] = dscrowd_token
             log.info("[PIPE] dscrowd_token: present (len=%d)", len(dscrowd_token))
