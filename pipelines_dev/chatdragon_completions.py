@@ -495,6 +495,11 @@ class Pipeline:
         __metadata__ = body.get("metadata", {})
         __task__ = __metadata__.get("task")
 
+        # Debug: check if confluence cookie arrived
+        _dbg_cookie = body.get("confluence_session_cookie", "MISSING_FROM_BODY")
+        _dbg_meta_cookie = __metadata__.get("confluence_session_cookie", "MISSING_FROM_META")
+        log.info("[PIPE-DEBUG] confluence_session_cookie body=%s meta=%s", _dbg_cookie[:30], _dbg_meta_cookie[:30])
+
         meta_headers = __metadata__.get("headers", {})
 
         extra_headers: dict = {}
