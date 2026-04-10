@@ -497,6 +497,7 @@ class Pipeline:
 
 
         meta_headers = __metadata__.get("headers", {})
+        log.info("[PIPE-DEBUG] body keys=%s", list(body.keys()))
         log.info("[PIPE-DEBUG] metadata keys=%s", list(__metadata__.keys()))
         log.info("[PIPE-DEBUG] meta_headers=%s", meta_headers)
 
