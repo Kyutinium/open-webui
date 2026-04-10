@@ -733,6 +733,7 @@
 			// Clear tool explorer data when switching chats
 			toolExplorerData.set(null);
 			showToolExplorer.set(false);
+			showControls.set(false);
 		});
 
 		const selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
