@@ -511,7 +511,11 @@ class Pipeline:
 
         owui_username = meta_headers.get("x-openwebui-user-name", "")
         if not owui_username and __user__:
-            owui_username = __user__.get("name", "") or __user__.get("email", "")
+            email = __user__.get("email", "")
+            if email and "@" in email:
+                owui_username = email.split("@")[0]
+            elif email:
+                owui_username = email
         if owui_username:
             try:
                 owui_username.encode("ascii")
