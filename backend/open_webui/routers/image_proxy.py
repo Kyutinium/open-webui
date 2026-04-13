@@ -232,15 +232,28 @@ async def get_image(
 
 @router.get("/fetch")
 async def fetch_image(
-    url: str = Query(..., description="HTTP/HTTPS image URL to proxy"),
+    url: str = Query("", description="HTTP/HTTPS image URL to proxy"),
+    u: str = Query("", description="Base64url-encoded URL (nginx-safe)"),
     background_tasks: BackgroundTasks = None,
 ):
     """Generic image proxy that fetches any HTTP/HTTPS URL and streams it back.
 
     Used to work around Mixed Content errors when HTTPS pages try to load
-    HTTP images.
+    HTTP images. Accepts either ``url`` (plain) or ``u`` (base64url-encoded,
+    useful when nginx blocks URLs containing http:// patterns).
     """
-    if not (url.startswith("http://") or url.startswith("https://")):
+    import base64
+
+    target = url
+    if not target and u:
+        try:
+            # Support base64url (URL-safe) encoding, handle missing padding
+            padded = u + "=" * (-len(u) % 4)
+            target = base64.urlsafe_b64decode(padded).decode("utf-8")
+        except Exception as e:
+            raise HTTPException(400, f"Invalid base64 url parameter: {e}")
+
+    if not target or not (target.startswith("http://") or target.startswith("https://")):
         raise HTTPException(400, "url must start with http:// or https://")
 
     client = httpx.AsyncClient(
@@ -249,7 +262,7 @@ async def fetch_image(
         follow_redirects=True,
     )
     try:
-        req = client.build_request("GET", url)
+        req = client.build_request("GET", target)
         r = await client.send(req, stream=True)
 
         if r.status_code != 200:

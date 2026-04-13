@@ -195,11 +195,18 @@
 		await discoverMaxPage(maxPageFound);
 	}
 
+	function b64url(s: string): string {
+		return btoa(unescape(encodeURIComponent(s)))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+	}
+
 	function getImageUrl(imagePath: string): string {
 		if (!imagePath) return imagePath;
 		// Proxy HTTP URLs through backend to avoid Mixed Content on HTTPS pages
 		if (imagePath.startsWith('http://')) {
-			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?url=${encodeURIComponent(imagePath)}`;
+			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?u=${b64url(imagePath)}`;
 		}
 		return imagePath;
 	}

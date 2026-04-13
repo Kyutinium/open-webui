@@ -4,11 +4,19 @@
 	import { showImageGallery, imageGalleryData } from '$lib/stores';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
+	/** Base64url-encode a string (nginx-safe URL parameter) */
+	function b64url(s: string): string {
+		return btoa(unescape(encodeURIComponent(s)))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+	}
+
 	/** Proxy HTTP image URLs through backend to avoid Mixed Content errors */
 	function proxyImageUrl(url: string): string {
 		if (!url) return url;
 		if (url.startsWith('http://')) {
-			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?url=${encodeURIComponent(url)}`;
+			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?u=${b64url(url)}`;
 		}
 		return url;
 	}
