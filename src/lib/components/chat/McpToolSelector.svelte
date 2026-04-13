@@ -12,6 +12,7 @@
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ConfluenceLoginModal from './ConfluenceLoginModal.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -21,6 +22,8 @@
 	let mcpTools: Array<{ id: string; name: string; server: string; requires_confluence_auth?: boolean }> = _mcpToolsCache;
 	let loaded = _mcpToolsCache.length > 0;
 	let checkingAuth = false;
+	let showLoginModal = false;
+	let loginUrl = '';
 
 	// Load/save selection from localStorage (per-user persistence)
 	function saveSelection() {
@@ -81,7 +84,7 @@
 		if (!_confluenceAuthenticated) {
 			const authed = await checkConfluenceAuth();
 			if (!authed && hasAnyConfluenceToolSelected()) {
-				await openConfluenceLogin();
+				await promptConfluenceLogin();
 			}
 		}
 	});
@@ -115,9 +118,18 @@
 		return selectedMcpTools.some((id) => needsConfluenceAuth(id));
 	}
 
-	async function openConfluenceLogin() {
+	/** Show login modal asking user to confirm before opening popup */
+	async function promptConfluenceLogin() {
+		loginUrl = await getLoginUrl();
+		showLoginModal = true;
+	}
+
+	/** Actually open the popup after user confirms in the modal */
+	function startConfluenceLoginFlow() {
+		showLoginModal = false;
+		if (!loginUrl) return;
+
 		checkingAuth = true;
-		const loginUrl = `${await getLoginUrl()}`;
 		const popup = window.open(loginUrl, 'confluence_login', 'width=600,height=700');
 
 		const pollInterval = setInterval(async () => {
@@ -146,6 +158,14 @@
 		}, 300000);
 	}
 
+	/** User cancelled the login modal — turn off confluence tools */
+	function cancelConfluenceLogin() {
+		showLoginModal = false;
+		selectedMcpTools = selectedMcpTools.filter((id) => !needsConfluenceAuth(id));
+		_mcpLastSelection = [...selectedMcpTools];
+		saveSelection();
+	}
+
 	async function getLoginUrl(): Promise<string> {
 		try {
 			const resp = await fetch(`${WEBUI_BASE_URL}/api/v1/confluence/check`, {
@@ -165,7 +185,7 @@
 		} else {
 			if (needsConfluenceAuth(id) && !_confluenceAuthenticated) {
 				selectedMcpTools = [...selectedMcpTools, id];
-				await openConfluenceLogin();
+				await promptConfluenceLogin();
 			} else {
 				selectedMcpTools = [...selectedMcpTools, id];
 			}
@@ -180,7 +200,7 @@
 		} else {
 			selectedMcpTools = mcpTools.map((t) => t.id);
 			if (hasAnyConfluenceToolSelected() && !_confluenceAuthenticated) {
-				await openConfluenceLogin();
+				await promptConfluenceLogin();
 			}
 		}
 		_mcpLastSelection = [...selectedMcpTools];
@@ -273,4 +293,12 @@
 			</div>
 		</div>
 	</Dropdown>
+{/if}
+
+{#if showLoginModal}
+	<ConfluenceLoginModal
+		{loginUrl}
+		onLogin={startConfluenceLoginFlow}
+		onCancel={cancelConfluenceLogin}
+	/>
 {/if}
