@@ -1,7 +1,17 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
+	import { WEBUI_BASE_URL } from '$lib/constants';
 	import { showImageGallery, imageGalleryData } from '$lib/stores';
 	import XMark from '$lib/components/icons/XMark.svelte';
+
+	/** Proxy HTTP image URLs through backend to avoid Mixed Content errors */
+	function proxyImageUrl(url: string): string {
+		if (!url) return url;
+		if (url.startsWith('http://')) {
+			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?url=${encodeURIComponent(url)}`;
+		}
+		return url;
+	}
 
 	const i18n = getContext('i18n');
 
@@ -193,7 +203,7 @@
 									on:click={() => openThumbnail(result.thumbnail)}
 								>
 									<img
-										src={result.thumbnail}
+										src={proxyImageUrl(result.thumbnail)}
 										alt=""
 										class="w-full h-full object-cover"
 										loading="lazy"

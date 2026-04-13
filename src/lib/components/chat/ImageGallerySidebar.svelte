@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import panzoom, { type PanZoom } from 'panzoom';
+	import { WEBUI_BASE_URL } from '$lib/constants';
 	import { showImageGallery, imageGalleryData } from '$lib/stores';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
@@ -85,7 +86,7 @@
 			const img = new Image();
 			img.onload = () => resolve(true);
 			img.onerror = () => resolve(false);
-			img.src = url;
+			img.src = getImageUrl(url);
 		});
 	}
 
@@ -195,6 +196,11 @@
 	}
 
 	function getImageUrl(imagePath: string): string {
+		if (!imagePath) return imagePath;
+		// Proxy HTTP URLs through backend to avoid Mixed Content on HTTPS pages
+		if (imagePath.startsWith('http://')) {
+			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?url=${encodeURIComponent(imagePath)}`;
+		}
 		return imagePath;
 	}
 
