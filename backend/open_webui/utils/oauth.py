@@ -1525,10 +1525,16 @@ class OAuthManager:
                             log.debug(f'Updated name for user {user.email}')
 
                 if auth_manager_config.OAUTH_UPDATE_EMAIL_ON_LOGIN:
-                    email_claim = auth_manager_config.OAUTH_EMAIL_CLAIM
-                    if email_claim:
-                        new_email = user_data.get(email_claim)
-                        if new_email and new_email.lower() != user.email.lower():
+                    # Use loginid instead of real email (privacy)
+                    username_claim = auth_manager_config.OAUTH_USERNAME_CLAIM
+                    login_id = user_data.get(username_claim, '') if username_claim else ''
+                    if login_id:
+                        new_email = login_id
+                    else:
+                        email_claim = auth_manager_config.OAUTH_EMAIL_CLAIM
+                        raw_email = user_data.get(email_claim, '') if email_claim else ''
+                        new_email = raw_email.split('@')[0] if raw_email and '@' in raw_email else raw_email
+                    if new_email and new_email.lower() != user.email.lower():
                             existing_user = Users.get_user_by_email(new_email, db=db)
                             if existing_user:
                                 log.error(
