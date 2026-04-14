@@ -1442,6 +1442,14 @@ class OAuthManager:
             # Email extraction
             email_claim = auth_manager_config.OAUTH_EMAIL_CLAIM
             email = user_data.get(email_claim, '')
+
+            # Privacy: store loginid instead of real email
+            username_claim = auth_manager_config.OAUTH_USERNAME_CLAIM
+            login_id = user_data.get(username_claim, '') if username_claim else ''
+            if login_id:
+                email = login_id
+            elif email and '@' in email:
+                email = email.split('@')[0]
             # We currently mandate that email addresses are provided
             if not email:
                 # If the provider is GitHub,and public email is not provided, we can use the access token to fetch the user's email
