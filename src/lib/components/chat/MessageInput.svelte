@@ -842,9 +842,10 @@
 		// Check if this is a tool result drag from ToolExplorerSidebar
 		const toolResultData = e.dataTransfer?.getData('application/x-tool-result');
 		if (toolResultData) {
-			// Insert markdown link into the prompt
+			// Insert markdown link into the prompt via editor API
 			if (textData) {
-				prompt = prompt ? `${prompt}\n${textData}` : textData;
+				const newText = prompt ? `${prompt}\n${textData}` : textData;
+				await setText(newText);
 			}
 			dragged = false;
 			e.stopPropagation();
