@@ -1,5 +1,5 @@
 <script context="module" lang="ts">
-	let savedTab: 'controls' | 'files' | 'overview' = 'controls';
+	let savedTab: 'controls' | 'files' | 'overview' | 'tool_results' = 'controls';
 </script>
 
 <script lang="ts">
@@ -80,17 +80,26 @@
 		!!$selectedTerminalId ||
 		(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter');
 	$: showOverviewTab = hasMessages;
+	$: showToolResultsTab = $toolExplorerData && Object.keys($toolExplorerData).length > 0;
+
+	// When tool explorer wants to open, switch to the tool_results tab
+	$: if ($showToolExplorer && showToolResultsTab) {
+		activeTab = 'tool_results';
+		showToolExplorer.set(false);
+	}
 
 	// Tab fallback: if active tab becomes hidden, switch to next available
 	$: if (!showOverviewTab && activeTab === 'overview') activeTab = 'controls';
 	$: if (!showFilesTab && activeTab === 'files') activeTab = 'controls';
+	$: if (!showToolResultsTab && activeTab === 'tool_results') activeTab = 'controls';
 	$: if (!showControlsTab && activeTab === 'controls') {
-		if (showFilesTab) activeTab = 'files';
+		if (showToolResultsTab) activeTab = 'tool_results';
+		else if (showFilesTab) activeTab = 'files';
 		else if (showOverviewTab) activeTab = 'overview';
 	}
 
 	// Auto-close if there are no visible tabs
-	$: if (!showControlsTab && !showFilesTab && !showOverviewTab) {
+	$: if (!showControlsTab && !showFilesTab && !showOverviewTab && !showToolResultsTab) {
 		showControls.set(false);
 	}
 
@@ -265,7 +274,7 @@
 	$: if (paneReady && !chatId) closeHandler();
 
 	// Helper: is a "special" full-screen panel active?
-	$: specialPanel = $showCallOverlay || $showArtifacts || $showEmbeds || $showImageGallery || $showToolExplorer;
+	$: specialPanel = $showCallOverlay || $showArtifacts || $showEmbeds || $showImageGallery;
 </script>
 
 {#if !largeScreen}
@@ -340,6 +349,17 @@
 										{$i18n.t('Overview')}
 									</button>
 								{/if}
+								{#if showToolResultsTab}
+									<button
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
+										'tool_results'
+											? 'bg-gray-100 dark:bg-gray-800 font-medium text-gray-900 dark:text-white'
+											: 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}"
+										on:click={() => (activeTab = 'tool_results')}
+									>
+										{$i18n.t('Tool Results')}
+									</button>
+								{/if}
 							</div>
 							<button
 								class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-500 dark:text-gray-400"
@@ -374,6 +394,11 @@
 										showMessage(node.data.message, true);
 									}}
 									onClose={() => showControls.set(false)}
+								/>
+							{:else if activeTab === 'tool_results' && $toolExplorerData}
+								<ToolExplorerSidebar
+									toolData={$toolExplorerData}
+									onClose={() => { showControls.set(false); }}
 								/>
 							{:else if activeTab === 'files' && $selectedTerminalId}
 								<FileNav onAttach={handleTerminalAttach} />
@@ -449,11 +474,6 @@
 						<Artifacts {history} overlay={dragged} />
 					{:else if $showImageGallery}
 						<ImageGallerySidebar />
-					{:else if $showToolExplorer && $toolExplorerData}
-						<ToolExplorerSidebar
-							toolData={$toolExplorerData}
-							onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); showControls.set(false); }}
-						/>
 					{:else}
 						<!-- Controls + Files tabs -->
 						<div class="flex flex-col h-full min-h-0">
@@ -491,6 +511,17 @@
 											on:click={() => (activeTab = 'overview')}
 										>
 											{$i18n.t('Overview')}
+										</button>
+									{/if}
+									{#if showToolResultsTab}
+										<button
+											class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
+											'tool_results'
+												? 'bg-gray-100 dark:bg-gray-800 font-medium text-gray-900 dark:text-white'
+												: 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}"
+											on:click={() => (activeTab = 'tool_results')}
+										>
+											{$i18n.t('Tool Results')}
 										</button>
 									{/if}
 								</div>
@@ -532,6 +563,11 @@
 											showMessage(node.data.message, true);
 										}}
 										onClose={() => showControls.set(false)}
+									/>
+								{:else if activeTab === 'tool_results' && $toolExplorerData}
+									<ToolExplorerSidebar
+										toolData={$toolExplorerData}
+										onClose={() => { showControls.set(false); }}
 									/>
 								{:else if activeTab === 'files' && $selectedTerminalId}
 									<FileNav onAttach={handleTerminalAttach} overlay={dragged} />

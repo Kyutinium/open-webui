@@ -495,14 +495,15 @@ class Pipeline:
         __metadata__ = body.get("metadata", {})
         __task__ = __metadata__.get("task")
 
+
         meta_headers = __metadata__.get("headers", {})
+        log.info("[PIPE-DEBUG] body keys=%s", list(body.keys()))
+        log.info("[PIPE-DEBUG] metadata keys=%s", list(__metadata__.keys()))
+        log.info("[PIPE-DEBUG] meta_headers=%s", meta_headers)
 
         extra_headers: dict = {}
 
         dscrowd_token = meta_headers.get("x-cookie-dscrowd.token_key", "")
-        # Also check confluence_session_cookie from frontend auth flow
-        if not dscrowd_token:
-            dscrowd_token = body.get("confluence_session_cookie") or __metadata__.get("confluence_session_cookie") or ""
         if dscrowd_token:
             extra_headers["X-Cookie-dscrowd.token_key"] = dscrowd_token
             log.info("[PIPE] dscrowd_token: present (len=%d)", len(dscrowd_token))
@@ -511,7 +512,11 @@ class Pipeline:
 
         owui_username = meta_headers.get("x-openwebui-user-name", "")
         if not owui_username and __user__:
-            owui_username = __user__.get("name", "") or __user__.get("email", "")
+            email = __user__.get("email", "")
+            if email and "@" in email:
+                owui_username = email.split("@")[0]
+            elif email:
+                owui_username = email
         if owui_username:
             try:
                 owui_username.encode("ascii")

@@ -733,6 +733,7 @@
 			// Clear tool explorer data when switching chats
 			toolExplorerData.set(null);
 			showToolExplorer.set(false);
+			showControls.set(false);
 		});
 
 		const selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
@@ -2275,7 +2276,7 @@
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
 				mcp_tools: selectedMcpTools.length > 0 ? selectedMcpTools : undefined,
-				confluence_session_cookie: confluenceSessionCookie || undefined,
+				// confluence cookie forwarded via backend middleware, not frontend
 				terminal_id: activeTerminalId ?? undefined,
 				tool_servers: [
 					...($toolServers ?? []).filter(

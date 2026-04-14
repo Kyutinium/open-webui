@@ -1103,6 +1103,8 @@ async def generate_chat_completion(
             'email': user.email,
             'role': user.role,
         }
+        if metadata:
+            payload['metadata'] = metadata
 
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
     key = request.app.state.config.OPENAI_API_KEYS[idx]

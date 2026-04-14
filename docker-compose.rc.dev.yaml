@@ -17,6 +17,7 @@ services:
       SSO_SYSTEM_ID: "SY"
       SSO_LOGIN_ID_CLAIM: loginid
       SSO_USER_ID_CLAIM: userid
+      OAUTH_USERNAME_CLAIM: loginid
       ENABLE_OAUTH_SIGNUP: "true"
       ENABLE_AUDIT_LOGS_DB: "true"
       AUDIT_LOG_LEVEL: REQUEST

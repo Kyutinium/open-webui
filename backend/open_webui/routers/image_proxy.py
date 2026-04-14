@@ -223,3 +223,80 @@ async def get_image(
         except Exception:
             pass
         raise HTTPException(502, f"Upstream connection error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# GET /fetch?url=<http-url>
+# ---------------------------------------------------------------------------
+
+
+@router.get("/fetch")
+async def fetch_image(
+    url: str = Query("", description="HTTP/HTTPS image URL to proxy"),
+    u: str = Query("", description="Base64url-encoded URL (nginx-safe)"),
+    background_tasks: BackgroundTasks = None,
+):
+    """Generic image proxy that fetches any HTTP/HTTPS URL and streams it back.
+
+    Used to work around Mixed Content errors when HTTPS pages try to load
+    HTTP images. Accepts either ``url`` (plain) or ``u`` (base64url-encoded,
+    useful when nginx blocks URLs containing http:// patterns).
+    """
+    import base64
+
+    target = url
+    if not target and u:
+        try:
+            # Support base64url (URL-safe) encoding, handle missing padding
+            padded = u + "=" * (-len(u) % 4)
+            target = base64.urlsafe_b64decode(padded).decode("utf-8")
+        except Exception as e:
+            raise HTTPException(400, f"Invalid base64 url parameter: {e}")
+
+    if not target or not (target.startswith("http://") or target.startswith("https://")):
+        raise HTTPException(400, "url must start with http:// or https://")
+
+    client = httpx.AsyncClient(
+        verify=False,
+        timeout=30.0,
+        follow_redirects=True,
+    )
+    try:
+        req = client.build_request("GET", target)
+        r = await client.send(req, stream=True)
+
+        if r.status_code != 200:
+            body = await r.aread()
+            await r.aclose()
+            await client.aclose()
+            return Response(
+                content=body,
+                status_code=r.status_code,
+                media_type=r.headers.get("content-type", "text/plain"),
+            )
+
+        media_type = r.headers.get("content-type", "application/octet-stream")
+        out_headers = {
+            k: v for k, v in r.headers.items() if k.lower() in PASS_HEADERS
+        }
+        out_headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        out_headers["Cache-Control"] = "public, max-age=3600"
+
+        async def iterator():
+            async for chunk in r.aiter_bytes():
+                yield chunk
+
+        if background_tasks is not None:
+            background_tasks.add_task(r.aclose)
+            background_tasks.add_task(client.aclose)
+
+        return StreamingResponse(
+            iterator(), media_type=media_type, headers=out_headers
+        )
+
+    except httpx.HTTPError as e:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+        raise HTTPException(502, f"Upstream connection error: {e}")

@@ -212,6 +212,7 @@ async def generate_function_chat_completion(request, form_data, user, models: di
     model_info = Models.get_model_by_id(model_id)
 
     metadata = form_data.pop('metadata', {})
+    form_data['metadata'] = metadata  # keep metadata in body for pipe access
 
     files = metadata.get('files', [])
     tool_ids = metadata.get('tool_ids', [])
