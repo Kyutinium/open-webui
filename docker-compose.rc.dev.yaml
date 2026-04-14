@@ -18,7 +18,9 @@ services:
       SSO_LOGIN_ID_CLAIM: loginid
       SSO_USER_ID_CLAIM: userid
       OAUTH_USERNAME_CLAIM: loginid
+      OAUTH_UPDATE_NAME_ON_LOGIN: "true"
       ENABLE_OAUTH_SIGNUP: "true"
+      ENABLE_ADMIN_CHAT_ACCESS: "true"
       ENABLE_AUDIT_LOGS_DB: "true"
       AUDIT_LOG_LEVEL: REQUEST
     extra_hosts:
