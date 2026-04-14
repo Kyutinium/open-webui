@@ -811,6 +811,12 @@
 	const onDragOver = (e: DragEvent) => {
 		e.preventDefault();
 
+		// Tool result drag from sidebar — don't show file drop overlay
+		if (e.dataTransfer?.types?.includes('application/x-tool-result')) {
+			dragged = false;
+			return;
+		}
+
 		// Check if a file or a sidebar chat item is being dragged.
 		if (e.dataTransfer?.types?.includes('Files') || e.dataTransfer?.types?.includes('text/plain')) {
 			dragged = true;
