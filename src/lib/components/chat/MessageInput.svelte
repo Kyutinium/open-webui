@@ -832,6 +832,19 @@
 
 		// Check if the dropped data is a sidebar chat item
 		const textData = e.dataTransfer?.getData('text/plain');
+
+		// Check if this is a tool result drag from ToolExplorerSidebar
+		const toolResultData = e.dataTransfer?.getData('application/x-tool-result');
+		if (toolResultData) {
+			// Insert markdown link into the prompt
+			if (textData) {
+				prompt = prompt ? `${prompt}\n${textData}` : textData;
+			}
+			dragged = false;
+			e.stopPropagation();
+			return;
+		}
+
 		if (textData) {
 			try {
 				const data = JSON.parse(textData);
