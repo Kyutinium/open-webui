@@ -811,6 +811,12 @@
 	const onDragOver = (e: DragEvent) => {
 		e.preventDefault();
 
+		// Tool result drag from sidebar — don't show file drop overlay
+		if (e.dataTransfer?.types?.includes('application/x-tool-result')) {
+			dragged = false;
+			return;
+		}
+
 		// Check if a file or a sidebar chat item is being dragged.
 		if (e.dataTransfer?.types?.includes('Files') || e.dataTransfer?.types?.includes('text/plain')) {
 			dragged = true;
@@ -832,6 +838,20 @@
 
 		// Check if the dropped data is a sidebar chat item
 		const textData = e.dataTransfer?.getData('text/plain');
+
+		// Check if this is a tool result drag from ToolExplorerSidebar
+		const toolResultData = e.dataTransfer?.getData('application/x-tool-result');
+		if (toolResultData) {
+			// Insert markdown link into the prompt via editor API
+			if (textData) {
+				const newText = prompt ? `${prompt}\n${textData}` : textData;
+				await setText(newText);
+			}
+			dragged = false;
+			e.stopPropagation();
+			return;
+		}
+
 		if (textData) {
 			try {
 				const data = JSON.parse(textData);

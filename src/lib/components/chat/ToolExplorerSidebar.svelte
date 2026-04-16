@@ -203,7 +203,18 @@
 				<!-- Result items -->
 				{#if isExpanded}
 					{#each call.results as result, resultIdx}
-						<div class="flex gap-2.5 px-3 py-2 ml-5 border-b border-gray-50/50 dark:border-gray-800/30 hover:bg-gray-50/50 dark:hover:bg-gray-800/30">
+						<!-- svelte-ignore a11y-no-static-element-interactions -->
+						<div
+							class="flex gap-2.5 px-3 py-2 ml-5 border-b border-gray-50/50 dark:border-gray-800/30 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 cursor-grab active:cursor-grabbing"
+							draggable="true"
+							on:dragstart={(e) => {
+								const text = result.url
+									? `[${result.title || 'Untitled'}](${result.url})`
+									: result.title || 'Untitled';
+								e.dataTransfer?.setData('text/plain', text);
+								e.dataTransfer?.setData('application/x-tool-result', JSON.stringify(result));
+							}}
+						>
 							<!-- Thumbnail -->
 							{#if result.thumbnail}
 								<button
