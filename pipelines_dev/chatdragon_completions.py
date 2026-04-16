@@ -681,15 +681,11 @@ class Pipeline:
                 thought_opened = True
 
             url = f"{self.valves.BASE_URL.rstrip('/')}/v1/chat/completions"
-            # Use a generous read timeout — the gateway sends SSE keepalive
-            # comments every ~15s during idle periods (tool execution, context
-            # compaction), so a 60s read timeout catches truly dead connections
-            # while not killing active-but-quiet streams.
             timeout = httpx.Timeout(
                 connect=30.0,
-                read=60.0,
+                read=float(self.valves.TIMEOUT),
                 write=30.0,
-                pool=self.valves.TIMEOUT,
+                pool=30.0,
             )
             with httpx.Client(timeout=timeout) as client:
                 with client.stream("POST", url, json=payload, headers=self._make_headers()) as resp:
