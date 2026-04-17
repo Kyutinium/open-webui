@@ -191,10 +191,6 @@ class Pipeline:
 - 검색/도구를 사용한 경우: 모든 검색이 끝난 뒤 답변 직전에 `<response>` 출력
 - 검색/도구 없이 바로 답변하는 경우: 답변 시작 직전에 `<response>` 출력
 
-```
-<response>
-```
-
 이 토큰 이후에 최종 답변을 작성한다."""
 
     def _wrap_thought_content(self, text: str) -> str:
@@ -203,7 +199,7 @@ class Pipeline:
         if "<response>" in text:
             parts = text.split("<response>", 1)
             thought_content = parts[0].strip()
-            response_content = parts[1].strip() if len(parts) > 1 else ""
+            response_content = parts[1].replace("<response>", "").strip() if len(parts) > 1 else ""
             return f"<thought>\n{thought_content}\n</thought>\n\n{response_content}"
         return f"<thought>\n{text}\n</thought>"
 
@@ -943,8 +939,10 @@ class Pipeline:
 
                         if thought_wrapped:
                             if response_tag_sent:
-                                full_text_acc += chunk
-                                yield chunk
+                                chunk = chunk.replace(RESPONSE_TAG, "")
+                                if chunk:
+                                    full_text_acc += chunk
+                                    yield chunk
                             elif chunk.startswith(TOOL_DETAILS_PREFIX):
                                 # Tool <details> blocks bypass the buffer
                                 if text_buffer:
