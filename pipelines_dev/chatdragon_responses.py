@@ -199,7 +199,7 @@ class Pipeline:
         if "<response>" in text:
             parts = text.split("<response>", 1)
             thought_content = parts[0].strip()
-            response_content = parts[1].replace("<response>", "").strip() if len(parts) > 1 else ""
+            response_content = parts[1].replace("<response>", "").replace("</response>", "").strip() if len(parts) > 1 else ""
             return f"<thought>\n{thought_content}\n</thought>\n\n{response_content}"
         return f"<thought>\n{text}\n</thought>"
 
@@ -693,6 +693,7 @@ class Pipeline:
         full_text_acc = ""  # Accumulate full response for image URL detection
         BUFFER_SIZE = 50
         RESPONSE_TAG = "<response>"
+        RESPONSE_CLOSE_TAG = "</response>"
         TOOL_DETAILS_PREFIX = "\n\n<details "
 
         tool_names: dict = {}
@@ -939,7 +940,7 @@ class Pipeline:
 
                         if thought_wrapped:
                             if response_tag_sent:
-                                chunk = chunk.replace(RESPONSE_TAG, "")
+                                chunk = chunk.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
                                 if chunk:
                                     full_text_acc += chunk
                                     yield chunk
@@ -977,6 +978,8 @@ class Pipeline:
             yield f"\n\nError: {e}"
         finally:
             if thought_wrapped and thought_opened and not response_tag_sent:
+                if text_buffer:
+                    text_buffer = text_buffer.replace(RESPONSE_CLOSE_TAG, "")
                 if not any_tool_used and text_buffer:
                     # No tools were used and model didn't emit <response> —
                     # treat the entire content as the response, not thought.
