@@ -713,9 +713,9 @@ class Pipeline:
             url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
             timeout = httpx.Timeout(
                 connect=30.0,
-                read=60.0,
+                read=float(self.valves.TIMEOUT),
                 write=30.0,
-                pool=self.valves.TIMEOUT,
+                pool=30.0,
             )
             with httpx.Client(timeout=timeout) as client:
                 with client.stream("POST", url, json=payload, headers=self._make_headers()) as resp:
