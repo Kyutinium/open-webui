@@ -580,16 +580,33 @@ log = logging.getLogger(__name__)
 class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except (HTTPException, StarletteHTTPException) as ex:
             if ex.status_code == 404:
                 if path.endswith('.js'):
                     # Return 404 for javascript files
                     raise ex
                 else:
-                    return await super().get_response('index.html', scope)
+                    response = await super().get_response('index.html', scope)
             else:
                 raise ex
+
+        # Inject WEBUI_NAME into index.html so the browser tab shows the right
+        # name on first load, before JS hydrates.
+        if path in ('', '.', 'index.html') or (
+            hasattr(response, 'path') and str(response.path).endswith('index.html')
+        ):
+            try:
+                from starlette.responses import HTMLResponse
+
+                with open(response.path, 'rb') as f:
+                    html = f.read().decode('utf-8')
+                html = html.replace('__WEBUI_NAME__', WEBUI_NAME)
+                return HTMLResponse(content=html, status_code=response.status_code)
+            except Exception:
+                pass
+
+        return response
 
 
 if LOG_FORMAT != 'json':
