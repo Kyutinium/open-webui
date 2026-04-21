@@ -563,12 +563,14 @@
 
 				history.messages[event.message_id] = message;
 
-				if (message.done) {
+				if (message.done && !$mobile) {
 					getContents();
 
 					if (
-						(message.sources?.length > 0 || message.code_executions?.length > 0) &&
-						!$mobile
+						message.sources?.length > 0 ||
+						message.code_executions?.length > 0 ||
+						message.statusHistory?.length > 0 ||
+						(message.content && /<details\s/.test(message.content))
 					) {
 						showControls.set(true);
 					}
