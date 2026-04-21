@@ -637,9 +637,6 @@
 							}
 						} catch {}
 					}
-					if (contentToParse.includes('tool_explorer') && Object.keys(merged).length === 0) {
-						console.warn('[ToolExplorer Debug] found tool_explorer in content but no regex match. Content sample:', contentToParse.substring(contentToParse.indexOf('tool_explorer') - 50, contentToParse.indexOf('tool_explorer') + 200));
-					}
 					if (Object.keys(merged).length > 0) {
 						toolExplorerData.set(merged);
 						showToolExplorer.set(true);
