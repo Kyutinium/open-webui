@@ -1776,6 +1776,8 @@
 				scrollToBottom();
 			}
 
+			getContents();
+
 			// Fire-and-forget: run chatCompletedHandler for background work
 			// (outlet filters, chat save, title gen, follow-ups, tags)
 			// without blocking the user from sending new messages.
