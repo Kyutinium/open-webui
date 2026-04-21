@@ -570,7 +570,7 @@
 						message.sources?.length > 0 ||
 						message.code_executions?.length > 0 ||
 						message.statusHistory?.length > 0 ||
-						(message.content && /<details\s/.test(message.content))
+						(message.content && /details\s+type="(?:search_results_button|tool_explorer|image_gallery)"/.test(message.content))
 					) {
 						showControls.set(true);
 					}
