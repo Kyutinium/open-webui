@@ -420,6 +420,7 @@
 
 	const chatEventHandler = async (event, cb) => {
 		console.log(event);
+		console.warn('[ChatEvent]', event?.data?.type, event?.data?.data?.done);
 
 		if (event.chat_id === $chatId) {
 			await tick();
@@ -658,6 +659,7 @@
 	onMount(() => {
 		loading = true;
 		console.log('mounted');
+		console.warn('[Socket]', 'connected:', $socket?.connected, 'id:', $socket?.id);
 		window.addEventListener('message', onMessageHandler);
 		$socket?.on('events', chatEventHandler);
 
