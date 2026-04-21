@@ -289,7 +289,7 @@ class AuditLoggingMiddleware:
             self.audit_logger.write(entry)
 
             if ENABLE_AUDIT_LOGS_DB:
-                AuditLogs.insert(
+                await AuditLogs.insert(
                     entry_id=entry_id,
                     user=user,
                     audit_level=self.audit_level.value,
