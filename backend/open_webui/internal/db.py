@@ -192,11 +192,7 @@ SQLALCHEMY_DATABASE_URL = (
 def _make_async_url(url: str) -> str:
     """Convert a sync database URL to its async driver equivalent."""
     if url.startswith('sqlite+sqlcipher://'):
-        # SQLCipher has no async driver — not supported for async
-        raise ValueError(
-            'sqlite+sqlcipher:// URLs are not supported with async engine. '
-            'Use standard sqlite:// or postgresql:// instead.'
-        )
+        return 'sqlite+aiosqlite://'
     if url.startswith('sqlite:///') or url.startswith('sqlite://'):
         return url.replace('sqlite://', 'sqlite+aiosqlite://', 1)
     if url.startswith('postgresql+psycopg2://'):
@@ -335,20 +331,25 @@ ASYNC_SQLALCHEMY_DATABASE_URL = _make_async_url(
 )
 
 if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
-    # Generous default — async coroutines + no session sharing = high connection demand.
     _sqlite_pool_size = DATABASE_POOL_SIZE if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0 else 512
-    async_engine = create_async_engine(
-        ASYNC_SQLALCHEMY_DATABASE_URL,
+    _async_engine_kwargs = dict(
         connect_args={'check_same_thread': False},
         pool_size=_sqlite_pool_size,
         pool_timeout=DATABASE_POOL_TIMEOUT,
         pool_recycle=DATABASE_POOL_RECYCLE,
         pool_pre_ping=True,
     )
+    if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
+        _async_engine_kwargs['creator'] = create_sqlcipher_connection
+    async_engine = create_async_engine(
+        ASYNC_SQLALCHEMY_DATABASE_URL,
+        **_async_engine_kwargs,
+    )
 
     @event.listens_for(async_engine.sync_engine, 'connect')
     def _set_sqlite_pragmas(dbapi_connection, connection_record):
-        _apply_sqlite_pragmas(dbapi_connection)
+        if not SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
+            _apply_sqlite_pragmas(dbapi_connection)
 else:
     # Inject asyncpg-compatible SSL connect_args when the user specified
     # sslmode/ssl in DATABASE_URL.
