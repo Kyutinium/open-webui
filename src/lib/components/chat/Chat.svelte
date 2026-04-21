@@ -562,6 +562,19 @@
 				}
 
 				history.messages[event.message_id] = message;
+
+				if (message.done && !$mobile) {
+					getContents();
+
+					if (
+						message.sources?.length > 0 ||
+						message.code_executions?.length > 0 ||
+						message.statusHistory?.length > 0 ||
+						(message.content && /details\s+type="(?:search_results_button|tool_explorer|image_gallery)"/.test(message.content))
+					) {
+						showControls.set(true);
+					}
+				}
 			}
 		} else {
 			// Non-active chat completion: queue stays in the global store.
@@ -1053,6 +1066,16 @@
 		});
 
 		artifactContents.set(contents);
+
+		if (
+			contents.length > 0 &&
+			($settings?.detectArtifacts ?? true) &&
+			!$mobile &&
+			$chatId
+		) {
+			showArtifacts.set(true);
+			showControls.set(true);
+		}
 	};
 
 	//////////////////////////
