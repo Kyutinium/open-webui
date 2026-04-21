@@ -622,18 +622,23 @@
 							.replaceAll('&quot;', '"')
 							.replaceAll('&amp;', '&');
 					}
+					// Strip blockquote prefixes ("> ") that middleware adds inside reasoning
+					contentToParse = contentToParse.replace(/^> /gm, '');
 					const explorerMatches = contentToParse.matchAll(
 						/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
 					);
 					let merged: Record<string, any[]> = {};
 					for (const m of explorerMatches) {
 						try {
-							const data = JSON.parse(m[1]);
+							const data = JSON.parse(m[1].replace(/^> /gm, '').trim());
 							for (const [key, val] of Object.entries(data)) {
 								if (!merged[key]) merged[key] = [];
 								merged[key].push(...(val as any[]));
 							}
 						} catch {}
+					}
+					if (contentToParse.includes('tool_explorer') && Object.keys(merged).length === 0) {
+						console.warn('[ToolExplorer Debug] found tool_explorer in content but no regex match. Content sample:', contentToParse.substring(contentToParse.indexOf('tool_explorer') - 50, contentToParse.indexOf('tool_explorer') + 200));
 					}
 					if (Object.keys(merged).length > 0) {
 						toolExplorerData.set(merged);
