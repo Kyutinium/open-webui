@@ -1012,11 +1012,11 @@
 		let contents = [];
 		messages.forEach((message) => {
 			if (message?.role !== 'user' && message?.content) {
-				console.log('[Artifact Debug] message content:', message.content.substring(0, 500));
+				console.warn('[Artifact Debug] message content:', message.content.substring(0, 300));
 				const { codeBlocks: codeBlocks, htmlGroups: htmlGroups } = getCodeBlockContents(
 					message.content
 				);
-				console.log('[Artifact Debug] codeBlocks:', codeBlocks.length, 'htmlGroups:', htmlGroups.length);
+				console.warn('[Artifact Debug] codeBlocks:', codeBlocks.length, 'htmlGroups:', htmlGroups.length);
 
 				if (htmlGroups && htmlGroups.length > 0) {
 					htmlGroups.forEach((group) => {
@@ -1780,7 +1780,7 @@
 				scrollToBottom();
 			}
 
-			console.log('[Artifact Debug] done=true, calling getContents()');
+			console.warn('[Artifact Debug] done=true, calling getContents()');
 			getContents();
 
 			// Fire-and-forget: run chatCompletedHandler for background work
