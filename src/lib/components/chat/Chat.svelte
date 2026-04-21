@@ -1053,6 +1053,16 @@
 		});
 
 		artifactContents.set(contents);
+
+		if (
+			contents.length > 0 &&
+			($settings?.detectArtifacts ?? true) &&
+			!$mobile &&
+			$chatId
+		) {
+			showArtifacts.set(true);
+			showControls.set(true);
+		}
 	};
 
 	//////////////////////////

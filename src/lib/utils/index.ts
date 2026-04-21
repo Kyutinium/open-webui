@@ -1723,10 +1723,6 @@ export const renderVegaVisualization = async (spec: string, i18n?: any) => {
 };
 
 export const getCodeBlockContents = (content: string): object => {
-	// Strip thinking/reasoning and other detail blocks before extracting code
-	// to prevent code inside <details type="reasoning"> from being treated as artifacts
-	content = removeAllDetails(content);
-
 	const codeBlockContents = content.match(/```[\s\S]*?```/g);
 
 	let codeBlocks = [];
@@ -1766,10 +1762,6 @@ export const getCodeBlockContents = (content: string): object => {
 			}
 		});
 	} else {
-		// Remove details tags from the content to check if there are any code blocks
-		// hidden in the details tags (e.g. reasoning, etc.)
-		content = removeAllDetails(content);
-
 		const inlineHtml = content.match(/<html>[\s\S]*?<\/html>/gi);
 		const inlineCss = content.match(/<style>[\s\S]*?<\/style>/gi);
 		const inlineJs = content.match(/<script>[\s\S]*?<\/script>/gi);
