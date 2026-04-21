@@ -1,7 +1,7 @@
 """Add audit_log table
 
 Revision ID: a1b2c3d4e5f7
-Revises: b2c3d4e5f6a7
+Revises: 56359461a091
 Create Date: 2026-04-03 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = 'a1b2c3d4e5f7'
-down_revision: Union[str, None] = 'b2c3d4e5f6a7'
+down_revision: Union[str, None] = '56359461a091'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
