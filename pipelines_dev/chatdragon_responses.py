@@ -195,7 +195,24 @@ class Pipeline:
 <response>
 ```
 
-이 토큰 이후에 최종 답변을 작성한다."""
+이 토큰 이후에 최종 답변을 작성한다.
+
+## MEMORY.md 업데이트 마커 (필수)
+
+`<response>` 토큰을 출력하기 **직전** 에 반드시 다음 한 줄을 별도 라인으로 포함한다:
+
+- `MEMORY_UPDATE: <추가한 entry 한 줄 요약>` — 이번 턴에 MEMORY.md 를 업데이트한 경우
+- `MEMORY_SKIP: <사유>` — 업데이트하지 않은 경우
+  (사유 예시: "novelty 미달" / "observation <2회" / "기존 항목과 중복" / "update 불필요")
+
+출력 형식 (예):
+```
+MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
+<response>
+```
+
+이 라인은 `<thought>` collapsible 에 포함되며 최종 사용자 응답에는 표시되지 않는다.
+**누락 = protocol violation.** 매 턴 반드시 둘 중 하나를 출력할 것."""
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
