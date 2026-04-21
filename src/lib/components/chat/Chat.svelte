@@ -563,6 +563,11 @@
 				}
 
 				history.messages[event.message_id] = message;
+
+				if (message.done) {
+					console.warn('[Artifact Debug] message.done=true in chatEventHandler, calling getContents()');
+					getContents();
+				}
 			}
 		} else {
 			// Non-active chat completion: queue stays in the global store.
