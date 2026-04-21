@@ -609,17 +609,18 @@
 
 				history.messages[event.message_id] = message;
 
-				if (message.done && !$mobile) {
+				if (message.done) {
 					getContents();
+				}
 
-					if (
-						message.sources?.length > 0 ||
-						message.code_executions?.length > 0 ||
-						message.statusHistory?.length > 0 ||
-						(message.content && /details\s+type="(?:search_results_button|tool_explorer|image_gallery)"/.test(message.content))
-					) {
-						showControls.set(true);
-					}
+				if (
+					!$mobile &&
+					!message._controlsOpened &&
+					message.content &&
+					/details\s+type="(?:search_results_button|tool_explorer|image_gallery)"/.test(message.content)
+				) {
+					message._controlsOpened = true;
+					showControls.set(true);
 				}
 			}
 		} else {
