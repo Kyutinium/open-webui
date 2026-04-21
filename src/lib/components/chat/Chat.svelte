@@ -620,6 +620,18 @@
 					/details\s+type="(?:search_results_button|tool_explorer|image_gallery)"/.test(message.content)
 				) {
 					message._controlsOpened = true;
+
+					const explorerMatch = message.content.match(
+						/<details\s+type="search_results_button"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/
+					);
+					if (explorerMatch) {
+						try {
+							const data = JSON.parse(explorerMatch[1]);
+							toolExplorerData.set(data);
+							showToolExplorer.set(true);
+						} catch {}
+					}
+
 					showControls.set(true);
 				}
 			}
