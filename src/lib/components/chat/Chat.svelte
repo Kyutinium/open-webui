@@ -614,7 +614,15 @@
 				}
 
 				if (!$mobile && message.content) {
-					const explorerMatches = message.content.matchAll(
+					let contentToParse = message.content;
+					if (contentToParse.includes('&lt;details')) {
+						contentToParse = contentToParse
+							.replaceAll('&lt;', '<')
+							.replaceAll('&gt;', '>')
+							.replaceAll('&quot;', '"')
+							.replaceAll('&amp;', '&');
+					}
+					const explorerMatches = contentToParse.matchAll(
 						/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
 					);
 					let merged: Record<string, any[]> = {};
