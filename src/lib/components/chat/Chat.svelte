@@ -420,7 +420,6 @@
 
 	const chatEventHandler = async (event, cb) => {
 		console.log(event);
-		console.warn('[ChatEvent]', event?.data?.type, event?.data?.data?.done);
 
 		if (event.chat_id === $chatId) {
 			await tick();
@@ -565,8 +564,14 @@
 				history.messages[event.message_id] = message;
 
 				if (message.done) {
-					console.warn('[Artifact Debug] message.done=true in chatEventHandler, calling getContents()');
 					getContents();
+
+					if (
+						(message.sources?.length > 0 || message.code_executions?.length > 0) &&
+						!$mobile
+					) {
+						showControls.set(true);
+					}
 				}
 			}
 		} else {
@@ -664,7 +669,6 @@
 	onMount(() => {
 		loading = true;
 		console.log('mounted');
-		console.warn('[Socket]', 'connected:', $socket?.connected, 'id:', $socket?.id);
 		window.addEventListener('message', onMessageHandler);
 		$socket?.on('events', chatEventHandler);
 
@@ -1017,11 +1021,9 @@
 		let contents = [];
 		messages.forEach((message) => {
 			if (message?.role !== 'user' && message?.content) {
-				console.warn('[Artifact Debug] message content:', message.content.substring(0, 300));
 				const { codeBlocks: codeBlocks, htmlGroups: htmlGroups } = getCodeBlockContents(
 					message.content
 				);
-				console.warn('[Artifact Debug] codeBlocks:', codeBlocks.length, 'htmlGroups:', htmlGroups.length);
 
 				if (htmlGroups && htmlGroups.length > 0) {
 					htmlGroups.forEach((group) => {
@@ -1784,9 +1786,6 @@
 			if (autoScroll) {
 				scrollToBottom();
 			}
-
-			console.warn('[Artifact Debug] done=true, calling getContents()');
-			getContents();
 
 			// Fire-and-forget: run chatCompletedHandler for background work
 			// (outlet filters, chat save, title gen, follow-ups, tags)
