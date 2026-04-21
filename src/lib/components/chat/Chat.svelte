@@ -613,26 +613,28 @@
 					getContents();
 				}
 
-				if (
-					!$mobile &&
-					!message._controlsOpened &&
-					message.content &&
-					/details\s+type="(?:search_results_button|tool_explorer|image_gallery)"/.test(message.content)
-				) {
-					message._controlsOpened = true;
-
-					const explorerMatch = message.content.match(
-						/<details\s+type="search_results_button"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/
+				if (!$mobile && message.content) {
+					const explorerMatches = message.content.matchAll(
+						/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
 					);
-					if (explorerMatch) {
+					let merged: Record<string, any[]> = {};
+					for (const m of explorerMatches) {
 						try {
-							const data = JSON.parse(explorerMatch[1]);
-							toolExplorerData.set(data);
-							showToolExplorer.set(true);
+							const data = JSON.parse(m[1]);
+							for (const [key, val] of Object.entries(data)) {
+								if (!merged[key]) merged[key] = [];
+								merged[key].push(...(val as any[]));
+							}
 						} catch {}
 					}
-
-					showControls.set(true);
+					if (Object.keys(merged).length > 0) {
+						toolExplorerData.set(merged);
+						showToolExplorer.set(true);
+						if (!message._controlsOpened) {
+							message._controlsOpened = true;
+							showControls.set(true);
+						}
+					}
 				}
 			}
 		} else {
