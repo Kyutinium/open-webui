@@ -331,24 +331,25 @@ ASYNC_SQLALCHEMY_DATABASE_URL = _make_async_url(
 )
 
 if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
-    _sqlite_pool_size = DATABASE_POOL_SIZE if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0 else 512
-    _async_engine_kwargs = dict(
-        connect_args={'check_same_thread': False},
-        pool_size=_sqlite_pool_size,
-        pool_timeout=DATABASE_POOL_TIMEOUT,
-        pool_recycle=DATABASE_POOL_RECYCLE,
-        pool_pre_ping=True,
-    )
     if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
-        _async_engine_kwargs['creator'] = create_sqlcipher_connection
-    async_engine = create_async_engine(
-        ASYNC_SQLALCHEMY_DATABASE_URL,
-        **_async_engine_kwargs,
-    )
+        async_engine = create_async_engine(
+            ASYNC_SQLALCHEMY_DATABASE_URL,
+            creator=create_sqlcipher_connection,
+            poolclass=NullPool,
+        )
+    else:
+        _sqlite_pool_size = DATABASE_POOL_SIZE if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0 else 512
+        async_engine = create_async_engine(
+            ASYNC_SQLALCHEMY_DATABASE_URL,
+            connect_args={'check_same_thread': False},
+            pool_size=_sqlite_pool_size,
+            pool_timeout=DATABASE_POOL_TIMEOUT,
+            pool_recycle=DATABASE_POOL_RECYCLE,
+            pool_pre_ping=True,
+        )
 
-    @event.listens_for(async_engine.sync_engine, 'connect')
-    def _set_sqlite_pragmas(dbapi_connection, connection_record):
-        if not SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
+        @event.listens_for(async_engine.sync_engine, 'connect')
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):
             _apply_sqlite_pragmas(dbapi_connection)
 else:
     # Inject asyncpg-compatible SSL connect_args when the user specified
