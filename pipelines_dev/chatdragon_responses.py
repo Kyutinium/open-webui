@@ -197,22 +197,35 @@ class Pipeline:
 
 이 토큰 이후에 최종 답변을 작성한다.
 
-## MEMORY.md 업데이트 마커 (필수)
+## MEMORY.md 업데이트 프로토콜 (필수 순서)
 
-`<response>` 토큰을 출력하기 **직전** 에 반드시 다음 한 줄을 별도 라인으로 포함한다:
+답변 작성 직전, 아래 시퀀스를 **이 순서대로** 실행한다:
 
-- `MEMORY_UPDATE: <추가한 entry 한 줄 요약>` — 이번 턴에 MEMORY.md 를 업데이트한 경우
-- `MEMORY_SKIP: <사유>` — 업데이트하지 않은 경우
-  (사유 예시: "novelty 미달" / "observation <2회" / "기존 항목과 중복" / "update 불필요")
+1. **판단** — 이번 턴에 MEMORY.md 에 추가할 새 entry 가 있는가?
+   (Admission 기준: future utility + observation ≥2회 + 기존 항목과 non-duplicate, 모두 Yes 일 때만)
 
-출력 형식 (예):
+2. **업데이트 필요 시** — 먼저 Edit 도구로 실제 파일 수정:
+   `Edit(file_path=".claude/MEMORY.md", old_string="...", new_string="...")`
+
+3. Edit 도구의 성공 반환 (예: "File updated") 을 **확인한 직후**, 마커 출력:
+   `MEMORY_UPDATE: <방금 추가한 entry 한 줄 요약>`
+
+4. **업데이트 불필요 시**: `MEMORY_SKIP: <사유>` 출력
+   (사유 예시: "novelty 미달" / "observation <2회" / "기존 항목과 중복" / "update 불필요")
+
+5. 마지막으로 `<response>` 토큰 출력.
+
+**금지 규칙**: Edit 도구 호출이 선행되지 않았다면 `MEMORY_UPDATE` 를 적지 마라.
+Edit 없이 `MEMORY_UPDATE` 를 출력하는 것은 **false reporting** 이며 protocol violation 이다.
+
+출력 예 (업데이트 수행 시):
 ```
+[Edit 도구 호출 → "File updated" 결과 확인됨]
 MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
 <response>
 ```
 
-이 라인은 `<thought>` collapsible 에 포함되며 최종 사용자 응답에는 표시되지 않는다.
-**누락 = protocol violation.** 매 턴 반드시 둘 중 하나를 출력할 것."""
+이 마커 라인은 `<thought>` collapsible 안에 남고 최종 사용자 응답에는 표시되지 않는다."""
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
