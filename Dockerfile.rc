@@ -128,7 +128,7 @@ RUN set -e; \
     fi; \
     fi; \
     # Install SQLCipher Python binding
-    pip3 install --no-cache-dir sqlcipher3; \
+    pip3 install --no-cache-dir sqlcipher3 aiosqlite; \
     mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/; \
     rm -rf /var/lib/apt/lists/*;
 

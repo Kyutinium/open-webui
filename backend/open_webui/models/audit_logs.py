@@ -1,14 +1,12 @@
-import json
 import logging
 import time
-import uuid
 from typing import Optional
 
 from pydantic import BaseModel
 from sqlalchemy import BigInteger, Column, Index, String, Text, Integer
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_webui.internal.db import Base, get_db_context
+from open_webui.internal.db import Base, get_async_db_context
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +63,7 @@ class AuditLogModel(BaseModel):
 
 class AuditLogs:
     @staticmethod
-    def insert(
+    async def insert(
         entry_id: str,
         user: dict,
         audit_level: str,
@@ -76,9 +74,9 @@ class AuditLogs:
         user_agent: Optional[str] = None,
         request_object: Optional[str] = None,
         response_object: Optional[str] = None,
-        db: Optional[Session] = None,
+        db: Optional[AsyncSession] = None,
     ) -> Optional[AuditLogModel]:
-        with get_db_context(db) as session:
+        async with get_async_db_context(db) as session:
             try:
                 audit_log = AuditLog(
                     id=entry_id,
@@ -97,10 +95,10 @@ class AuditLogs:
                     created_at=int(time.time()),
                 )
                 session.add(audit_log)
-                session.commit()
-                session.refresh(audit_log)
+                await session.commit()
+                await session.refresh(audit_log)
                 return AuditLogModel.model_validate(audit_log, from_attributes=True)
             except Exception as e:
                 log.error(f'Failed to insert audit log: {e}')
-                session.rollback()
+                await session.rollback()
                 return None

@@ -191,10 +191,6 @@ class Pipeline:
 - 검색/도구를 사용한 경우: 모든 검색이 끝난 뒤 답변 직전에 `<response>` 출력
 - 검색/도구 없이 바로 답변하는 경우: 답변 시작 직전에 `<response>` 출력
 
-```
-<response>
-```
-
 이 토큰 이후에 최종 답변을 작성한다.
 
 ## MEMORY.md 업데이트 프로토콜 (필수 순서)
@@ -233,7 +229,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         if "<response>" in text:
             parts = text.split("<response>", 1)
             thought_content = parts[0].strip()
-            response_content = parts[1].strip() if len(parts) > 1 else ""
+            response_content = parts[1].replace("<response>", "").replace("</response>", "").strip() if len(parts) > 1 else ""
             return f"<thought>\n{thought_content}\n</thought>\n\n{response_content}"
         return f"<thought>\n{text}\n</thought>"
 
@@ -727,6 +723,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         full_text_acc = ""  # Accumulate full response for image URL detection
         BUFFER_SIZE = 50
         RESPONSE_TAG = "<response>"
+        RESPONSE_CLOSE_TAG = "</response>"
         TOOL_DETAILS_PREFIX = "\n\n<details "
 
         tool_names: dict = {}
@@ -973,8 +970,10 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
 
                         if thought_wrapped:
                             if response_tag_sent:
-                                full_text_acc += chunk
-                                yield chunk
+                                chunk = chunk.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
+                                if chunk:
+                                    full_text_acc += chunk
+                                    yield chunk
                             elif chunk.startswith(TOOL_DETAILS_PREFIX):
                                 # Tool <details> blocks bypass the buffer
                                 if text_buffer:
@@ -1009,6 +1008,8 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             yield f"\n\nError: {e}"
         finally:
             if thought_wrapped and thought_opened and not response_tag_sent:
+                if text_buffer:
+                    text_buffer = text_buffer.replace(RESPONSE_CLOSE_TAG, "")
                 if not any_tool_used and text_buffer:
                     # No tools were used and model didn't emit <response> —
                     # treat the entire content as the response, not thought.
