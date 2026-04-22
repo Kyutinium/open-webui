@@ -41,6 +41,17 @@ def _is_tool_noise(text: str) -> bool:
     return bool(text) and _TOOL_NOISE_RE.match(text) is not None
 
 
+class _StaleRespIDError(Exception):
+    """Internal signal: gateway returned 409 Stale previous_response_id.
+
+    Carries the raw error body so the retry layer can parse the latest id.
+    """
+
+    def __init__(self, body_text: str):
+        super().__init__("Stale previous_response_id")
+        self.body_text = body_text
+
+
 def _safe_attr(value: str) -> str:
     """Sanitize a string for use inside a double-quoted HTML attribute.
 
@@ -135,6 +146,12 @@ class Pipeline:
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
+        # Per-chat_id locks serialize concurrent /v1/responses calls against
+        # the same conversation so the response-id chain cannot race between
+        # in-flight requests (the gateway rejects non-latest
+        # previous_response_id with 409 Stale).
+        self._chat_locks: dict[str, threading.Lock] = {}
+        self._chat_locks_guard = threading.Lock()
 
     def pipes(self) -> list:
         return [
@@ -632,6 +649,12 @@ class Pipeline:
 
         use_stream = body.get("stream", True)
         chat_id = __metadata__.get("chat_id", "")
+        # Background tasks (title/tag/follow-up generation) fire concurrently
+        # with the live user turn on the same chat_id.  Keep them off the
+        # main response-id chain so they can't race the user's turns — they
+        # get ephemeral sessions on the gateway instead.  An empty
+        # tracking id also bypasses the per-chat serialization lock.
+        tracking_chat_id = "" if __task__ else chat_id
 
         # Extract the last user message as input for /v1/responses
         last_user_content = user_message
@@ -653,7 +676,9 @@ class Pipeline:
         }
 
         # Multi-turn: use previous_response_id for continuity
-        prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
+        prev_resp_id = (
+            self._response_ids.get(tracking_chat_id) if tracking_chat_id else None
+        )
         if prev_resp_id:
             payload["previous_response_id"] = prev_resp_id
         else:
@@ -677,9 +702,9 @@ class Pipeline:
             log.info("[PIPE] allowed_tools: %s", payload["allowed_tools"])
 
         if use_stream:
-            return self._stream(payload, __task__, chat_id)
+            return self._stream(payload, __task__, tracking_chat_id)
         else:
-            return self._non_stream(payload, __task__, chat_id)
+            return self._non_stream(payload, __task__, tracking_chat_id)
 
     # ------------------------------------------------------------------
     # Streaming
@@ -702,6 +727,11 @@ class Pipeline:
         collected_thumbnails: list[str] = []  # Thumbnails from MCP tool results
         # Tool explorer: {tool_label: [{query, results}]}
         tool_explorer_data: dict[str, list[dict]] = {}
+        # Serialize concurrent requests for the same chat_id so the
+        # gateway's turn_counter can't advance out from under us.
+        chat_lock = self._get_chat_lock(chat_id) if chat_id else None
+        if chat_lock is not None:
+            chat_lock.acquire()
         try:
             if thought_wrapped:
                 yield "<thought>\n"
@@ -714,264 +744,283 @@ class Pipeline:
                 write=30.0,
                 pool=30.0,
             )
-            with httpx.Client(timeout=timeout) as client:
-                with client.stream("POST", url, json=payload, headers=self._make_headers()) as resp:
-                    if resp.status_code != 200:
-                        body_text = resp.read().decode()
-                        raise Exception(f"Server error ({resp.status_code}): {body_text}")
+            stale_retry_used = False
+            while True:
+                try:
+                    with httpx.Client(timeout=timeout) as client:
+                        with client.stream("POST", url, json=payload, headers=self._make_headers()) as resp:
+                            if resp.status_code != 200:
+                                body_text = resp.read().decode()
+                                if (
+                                    resp.status_code == 409
+                                    and not stale_retry_used
+                                    and "Stale previous_response_id" in body_text
+                                ):
+                                    raise _StaleRespIDError(body_text)
+                                raise Exception(f"Server error ({resp.status_code}): {body_text}")
 
-                    # Responses API uses SSE with event: type\ndata: json
-                    current_event_type = ""
-                    for line in resp.iter_lines():
-                        # SSE keepalive comments
-                        if line.startswith(":"):
-                            continue
-                        # Event type line
-                        if line.startswith("event: "):
-                            current_event_type = line[7:].strip()
-                            continue
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
+                            # Responses API uses SSE with event: type\ndata: json
+                            current_event_type = ""
+                            for line in resp.iter_lines():
+                                # SSE keepalive comments
+                                if line.startswith(":"):
+                                    continue
+                                # Event type line
+                                if line.startswith("event: "):
+                                    current_event_type = line[7:].strip()
+                                    continue
+                                if not line.startswith("data: "):
+                                    continue
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    break
 
-                        try:
-                            event = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
+                                try:
+                                    event = json.loads(data_str)
+                                except json.JSONDecodeError:
+                                    continue
 
-                        event_type = event.get("type", current_event_type)
-                        log.info("[PIPE-DEBUG] event_type=%s", event_type)
+                                event_type = event.get("type", current_event_type)
+                                log.info("[PIPE-DEBUG] event_type=%s", event_type)
 
-                        # Save response ID for multi-turn continuity
-                        if event_type == "response.completed":
-                            resp_obj = event.get("response", {})
-                            resp_id = resp_obj.get("id", "")
-                            if resp_id and chat_id:
-                                self._response_ids[chat_id] = resp_id
-                                log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
-                            continue
+                                # Save response ID for multi-turn continuity
+                                if event_type == "response.completed":
+                                    resp_obj = event.get("response", {})
+                                    resp_id = resp_obj.get("id", "")
+                                    if resp_id and chat_id:
+                                        self._response_ids[chat_id] = resp_id
+                                        log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
+                                    continue
 
-                        if event_type == "response.failed":
-                            err = event.get("response", {}).get("error", {})
-                            err_msg = err.get("message", "Unknown error")
-                            log.error("[PIPE] response.failed: %s", err_msg)
-                            yield f"\n\nError: {err_msg}"
-                            continue
+                                if event_type == "response.failed":
+                                    err = event.get("response", {}).get("error", {})
+                                    err_msg = err.get("message", "Unknown error")
+                                    log.error("[PIPE] response.failed: %s", err_msg)
+                                    yield f"\n\nError: {err_msg}"
+                                    continue
 
-                        # Skip non-content lifecycle events
-                        if event_type in (
-                            "response.created", "response.in_progress",
-                            "response.output_item.added", "response.output_item.done",
-                            "response.content_part.added", "response.content_part.done",
-                            "response.output_text.done",
-                        ):
-                            continue
+                                # Skip non-content lifecycle events
+                                if event_type in (
+                                    "response.created", "response.in_progress",
+                                    "response.output_item.added", "response.output_item.done",
+                                    "response.content_part.added", "response.content_part.done",
+                                    "response.output_text.done",
+                                ):
+                                    continue
 
-                        # Handle tool events (same structure as old system_event)
-                        sys_event = None
-                        if event_type == "response.tool_use":
-                            sys_event = event
-                            sys_event["type"] = "tool_use"
-                        elif event_type == "response.tool_result":
-                            sys_event = event
-                            sys_event["type"] = "tool_result"
-                        elif event_type.startswith("response.task_"):
-                            sys_event = event
-                            sys_event["type"] = event_type.replace("response.", "")
+                                # Handle tool events (same structure as old system_event)
+                                sys_event = None
+                                if event_type == "response.tool_use":
+                                    sys_event = event
+                                    sys_event["type"] = "tool_use"
+                                elif event_type == "response.tool_result":
+                                    sys_event = event
+                                    sys_event["type"] = "tool_result"
+                                elif event_type.startswith("response.task_"):
+                                    sys_event = event
+                                    sys_event["type"] = event_type.replace("response.", "")
 
-                        if sys_event:
-                            event_type = sys_event.get("type", "")
-                            log.info(
-                                "[PIPE] system_event type=%s keys=%s",
-                                event_type, list(sys_event.keys()),
-                            )
-                            if event_type in ("tool_use", "tool_result"):
-                                any_tool_used = True
-                                log.info(
-                                    "[PIPE-DEBUG] %s raw_event=%s",
-                                    event_type, json.dumps(sys_event, default=str)[:500],
-                                )
-                            # Extract data from MCP tool results
-                            if event_type == "tool_result":
-                                tool_id = sys_event.get("tool_use_id", "")
-                                raw = (
-                                    sys_event.get("content", "")
-                                    or sys_event.get("output", "")
-                                    or sys_event.get("result", "")
-                                )
-                                raw_str = str(raw)
-                                log.info(
-                                    "[PIPE-PARSE] raw type=%s len=%s preview=%s",
-                                    type(raw).__name__,
-                                    len(raw_str),
-                                    raw_str[:300],
-                                )
-                                # Detect persisted-output: SDK saved large
-                                # result to file and will Read it next.
-                                t_name = tool_names.get(tool_id, "")
-                                is_persisted = "[persisted-output]" in raw_str or "Output too large" in raw_str
-                                if is_persisted and t_name.startswith("mcp__"):
-                                    # Extract file path from persisted-output message
-                                    path_match = re.search(r"saved to:\s*(\S+)", raw_str)
-                                    persisted_path = path_match.group(1) if path_match else ""
-                                    # Store {file_path: (tool_name, args)} for matching
-                                    if not hasattr(self._local, "_persisted_map"):
-                                        self._local._persisted_map = {}
-                                    pending_info = tool_pending.get(tool_id, {})
-                                    self._local._persisted_map[persisted_path] = {
-                                        "tool": t_name,
-                                        "args": pending_info.get("args", "{}"),
-                                    }
+                                if sys_event:
+                                    event_type = sys_event.get("type", "")
                                     log.info(
-                                        "[PIPE-PARSE] persisted-output detected tool=%s path=%s",
-                                        t_name, persisted_path,
+                                        "[PIPE] system_event type=%s keys=%s",
+                                        event_type, list(sys_event.keys()),
                                     )
-                                else:
-                                    # Check if this Read's file_path matches a persisted-output
-                                    persisted_map = getattr(self._local, "_persisted_map", {})
-                                    persisted_match = None
-                                    if t_name == "Read" or not t_name.startswith("mcp__"):
-                                        # Check tool_use args for file_path
-                                        read_args = tool_pending.get(tool_id, {}).get("args", "{}")
-                                        try:
-                                            read_parsed = json.loads(read_args)
-                                            read_path = read_parsed.get("file_path", "")
-                                        except (json.JSONDecodeError, AttributeError):
-                                            read_path = ""
-                                        if read_path and read_path in persisted_map:
-                                            persisted_match = persisted_map.pop(read_path)
-                                            t_name = persisted_match["tool"]
-                                            log.info(
-                                                "[PIPE-PARSE] Read file_path=%s matched persisted tool=%s",
-                                                read_path, t_name,
-                                            )
-
-                                    parsed = self._parse_tool_content(raw)
-                                    log.info(
-                                        "[PIPE-PARSE] parsed type=%s result=%s",
-                                        type(parsed).__name__ if parsed else "None",
-                                        str(parsed)[:300] if parsed else "None",
-                                    )
-                                    # Thumbnails for gallery
-                                    thumbs = self._extract_thumbnails_from_tool_result(raw)
-                                    if thumbs:
-                                        collected_thumbnails.extend(thumbs)
-                                        log.info("[PIPE] collected %d thumbnails", len(thumbs))
-                                    # Structured results for tool explorer
-                                    if t_name.startswith("mcp__"):
-                                        results = self._extract_tool_results_for_explorer(raw)
-                                        if results:
-                                            parts = t_name.split("__")
-                                            label = parts[1] if len(parts) >= 2 else t_name
-                                            # Get query from args
-                                            orig_args = persisted_match["args"] if persisted_match else ""
-                                            pending = tool_pending.get(tool_id, {})
-                                            query = orig_args or pending.get("args", "{}")
-                                            try:
-                                                q_parsed = json.loads(query)
-                                                # Extract readable search query
-                                                query_str = ""
-                                                for v in q_parsed.values():
-                                                    if isinstance(v, str) and len(v) > 2:
-                                                        query_str = v
-                                                        break
-                                                if query_str:
-                                                    query = query_str
-                                                else:
-                                                    # No obvious string value; show key=value pairs
-                                                    pairs = [
-                                                        f"{k}={v}" for k, v in q_parsed.items()
-                                                        if isinstance(v, (str, int, float)) and str(v).strip()
-                                                    ]
-                                                    query = ", ".join(pairs) if pairs else query
-                                            except (json.JSONDecodeError, AttributeError):
-                                                pass
-                                            call_data = {
-                                                "query": query[:200],
-                                                "results": results,
+                                    if event_type in ("tool_use", "tool_result"):
+                                        any_tool_used = True
+                                        log.info(
+                                            "[PIPE-DEBUG] %s raw_event=%s",
+                                            event_type, json.dumps(sys_event, default=str)[:500],
+                                        )
+                                    # Extract data from MCP tool results
+                                    if event_type == "tool_result":
+                                        tool_id = sys_event.get("tool_use_id", "")
+                                        raw = (
+                                            sys_event.get("content", "")
+                                            or sys_event.get("output", "")
+                                            or sys_event.get("result", "")
+                                        )
+                                        raw_str = str(raw)
+                                        log.info(
+                                            "[PIPE-PARSE] raw type=%s len=%s preview=%s",
+                                            type(raw).__name__,
+                                            len(raw_str),
+                                            raw_str[:300],
+                                        )
+                                        # Detect persisted-output: SDK saved large
+                                        # result to file and will Read it next.
+                                        t_name = tool_names.get(tool_id, "")
+                                        is_persisted = "[persisted-output]" in raw_str or "Output too large" in raw_str
+                                        if is_persisted and t_name.startswith("mcp__"):
+                                            # Extract file path from persisted-output message
+                                            path_match = re.search(r"saved to:\s*(\S+)", raw_str)
+                                            persisted_path = path_match.group(1) if path_match else ""
+                                            # Store {file_path: (tool_name, args)} for matching
+                                            if not hasattr(self._local, "_persisted_map"):
+                                                self._local._persisted_map = {}
+                                            pending_info = tool_pending.get(tool_id, {})
+                                            self._local._persisted_map[persisted_path] = {
+                                                "tool": t_name,
+                                                "args": pending_info.get("args", "{}"),
                                             }
-                                            # Track for dedup
-                                            if label not in tool_explorer_data:
-                                                tool_explorer_data[label] = []
-                                            tool_explorer_data[label].append(call_data)
-                                            # Emit immediately so sidebar updates live
-                                            explorer_tag = self._build_tool_explorer_tag(
-                                                {label: [call_data]}
-                                            )
-                                            if thought_wrapped and not response_tag_sent:
-                                                if text_buffer:
-                                                    yield text_buffer
-                                                    text_buffer = ""
-                                                yield explorer_tag
-                                            else:
-                                                yield explorer_tag
                                             log.info(
-                                                "[PIPE] tool_explorer: %s +%d results (live)",
-                                                label, len(results),
+                                                "[PIPE-PARSE] persisted-output detected tool=%s path=%s",
+                                                t_name, persisted_path,
                                             )
-                                    # (persisted_map entries auto-removed via .pop above)
-                            rendered = self._render_system_event(
-                                event_type, sys_event, tool_names, tool_pending,
-                            )
-                            if rendered:
-                                if thought_wrapped and not response_tag_sent:
-                                    # Tool <details> blocks bypass the buffer
-                                    if text_buffer:
-                                        yield text_buffer
-                                        text_buffer = ""
-                                    yield rendered
+                                        else:
+                                            # Check if this Read's file_path matches a persisted-output
+                                            persisted_map = getattr(self._local, "_persisted_map", {})
+                                            persisted_match = None
+                                            if t_name == "Read" or not t_name.startswith("mcp__"):
+                                                # Check tool_use args for file_path
+                                                read_args = tool_pending.get(tool_id, {}).get("args", "{}")
+                                                try:
+                                                    read_parsed = json.loads(read_args)
+                                                    read_path = read_parsed.get("file_path", "")
+                                                except (json.JSONDecodeError, AttributeError):
+                                                    read_path = ""
+                                                if read_path and read_path in persisted_map:
+                                                    persisted_match = persisted_map.pop(read_path)
+                                                    t_name = persisted_match["tool"]
+                                                    log.info(
+                                                        "[PIPE-PARSE] Read file_path=%s matched persisted tool=%s",
+                                                        read_path, t_name,
+                                                    )
+
+                                            parsed = self._parse_tool_content(raw)
+                                            log.info(
+                                                "[PIPE-PARSE] parsed type=%s result=%s",
+                                                type(parsed).__name__ if parsed else "None",
+                                                str(parsed)[:300] if parsed else "None",
+                                            )
+                                            # Thumbnails for gallery
+                                            thumbs = self._extract_thumbnails_from_tool_result(raw)
+                                            if thumbs:
+                                                collected_thumbnails.extend(thumbs)
+                                                log.info("[PIPE] collected %d thumbnails", len(thumbs))
+                                            # Structured results for tool explorer
+                                            if t_name.startswith("mcp__"):
+                                                results = self._extract_tool_results_for_explorer(raw)
+                                                if results:
+                                                    parts = t_name.split("__")
+                                                    label = parts[1] if len(parts) >= 2 else t_name
+                                                    # Get query from args
+                                                    orig_args = persisted_match["args"] if persisted_match else ""
+                                                    pending = tool_pending.get(tool_id, {})
+                                                    query = orig_args or pending.get("args", "{}")
+                                                    try:
+                                                        q_parsed = json.loads(query)
+                                                        # Extract readable search query
+                                                        query_str = ""
+                                                        for v in q_parsed.values():
+                                                            if isinstance(v, str) and len(v) > 2:
+                                                                query_str = v
+                                                                break
+                                                        if query_str:
+                                                            query = query_str
+                                                        else:
+                                                            # No obvious string value; show key=value pairs
+                                                            pairs = [
+                                                                f"{k}={v}" for k, v in q_parsed.items()
+                                                                if isinstance(v, (str, int, float)) and str(v).strip()
+                                                            ]
+                                                            query = ", ".join(pairs) if pairs else query
+                                                    except (json.JSONDecodeError, AttributeError):
+                                                        pass
+                                                    call_data = {
+                                                        "query": query[:200],
+                                                        "results": results,
+                                                    }
+                                                    # Track for dedup
+                                                    if label not in tool_explorer_data:
+                                                        tool_explorer_data[label] = []
+                                                    tool_explorer_data[label].append(call_data)
+                                                    # Emit immediately so sidebar updates live
+                                                    explorer_tag = self._build_tool_explorer_tag(
+                                                        {label: [call_data]}
+                                                    )
+                                                    if thought_wrapped and not response_tag_sent:
+                                                        if text_buffer:
+                                                            yield text_buffer
+                                                            text_buffer = ""
+                                                        yield explorer_tag
+                                                    else:
+                                                        yield explorer_tag
+                                                    log.info(
+                                                        "[PIPE] tool_explorer: %s +%d results (live)",
+                                                        label, len(results),
+                                                    )
+                                            # (persisted_map entries auto-removed via .pop above)
+                                    rendered = self._render_system_event(
+                                        event_type, sys_event, tool_names, tool_pending,
+                                    )
+                                    if rendered:
+                                        if thought_wrapped and not response_tag_sent:
+                                            # Tool <details> blocks bypass the buffer
+                                            if text_buffer:
+                                                yield text_buffer
+                                                text_buffer = ""
+                                            yield rendered
+                                        else:
+                                            yield rendered
+                                    continue
+
+                                # Text delta handling
+                                if event_type != "response.output_text.delta":
+                                    continue
+                                chunk = event.get("delta", "")
+                                if not chunk:
+                                    continue
+
+                                # Filter SDK tool-execution noise
+                                stripped = chunk.strip()
+                                if _is_tool_noise(stripped):
+                                    continue
+
+                                if thought_wrapped:
+                                    if response_tag_sent:
+                                        chunk = chunk.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
+                                        if chunk:
+                                            full_text_acc += chunk
+                                            yield chunk
+                                    elif chunk.startswith(TOOL_DETAILS_PREFIX):
+                                        # Tool <details> blocks bypass the buffer
+                                        if text_buffer:
+                                            yield text_buffer
+                                            text_buffer = ""
+                                        yield chunk
+                                    else:
+                                        text_buffer += chunk
+                                        if RESPONSE_TAG in text_buffer:
+                                            idx = text_buffer.index(RESPONSE_TAG)
+                                            before = text_buffer[:idx]
+                                            after = text_buffer[idx + len(RESPONSE_TAG):]
+                                            if before:
+                                                yield before
+                                            yield "\n</thought>\n\n"
+                                            response_tag_sent = True
+                                            if after:
+                                                full_text_acc += after
+                                                yield after
+                                            text_buffer = ""
+                                        elif len(text_buffer) > BUFFER_SIZE:
+                                            safe_len = len(text_buffer) - len(RESPONSE_TAG)
+                                            if safe_len > 0:
+                                                yield text_buffer[:safe_len]
+                                                text_buffer = text_buffer[safe_len:]
                                 else:
-                                    yield rendered
-                            continue
-
-                        # Text delta handling
-                        if event_type != "response.output_text.delta":
-                            continue
-                        chunk = event.get("delta", "")
-                        if not chunk:
-                            continue
-
-                        # Filter SDK tool-execution noise
-                        stripped = chunk.strip()
-                        if _is_tool_noise(stripped):
-                            continue
-
-                        if thought_wrapped:
-                            if response_tag_sent:
-                                chunk = chunk.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
-                                if chunk:
                                     full_text_acc += chunk
                                     yield chunk
-                            elif chunk.startswith(TOOL_DETAILS_PREFIX):
-                                # Tool <details> blocks bypass the buffer
-                                if text_buffer:
-                                    yield text_buffer
-                                    text_buffer = ""
-                                yield chunk
-                            else:
-                                text_buffer += chunk
-                                if RESPONSE_TAG in text_buffer:
-                                    idx = text_buffer.index(RESPONSE_TAG)
-                                    before = text_buffer[:idx]
-                                    after = text_buffer[idx + len(RESPONSE_TAG):]
-                                    if before:
-                                        yield before
-                                    yield "\n</thought>\n\n"
-                                    response_tag_sent = True
-                                    if after:
-                                        full_text_acc += after
-                                        yield after
-                                    text_buffer = ""
-                                elif len(text_buffer) > BUFFER_SIZE:
-                                    safe_len = len(text_buffer) - len(RESPONSE_TAG)
-                                    if safe_len > 0:
-                                        yield text_buffer[:safe_len]
-                                        text_buffer = text_buffer[safe_len:]
-                        else:
-                            full_text_acc += chunk
-                            yield chunk
+                    # Stream ran to completion — exit the retry loop.
+                    break
+                except _StaleRespIDError as srid:
+                    stale_retry_used = True
+                    log.warning(
+                        "[PIPE] 409 Stale previous_response_id; recovering and retrying (chat=%s)",
+                        chat_id,
+                    )
+                    payload = self._apply_stale_recovery(payload, srid.body_text, chat_id)
+                    continue
 
         except Exception as e:
             log.error("Stream error: %s", e)
@@ -1016,6 +1065,9 @@ class Pipeline:
                     current=match["current"],
                     base_url=match["base_url"],
                 )
+
+            if chat_lock is not None:
+                chat_lock.release()
 
     def _render_system_event(
         self,
@@ -1231,11 +1283,30 @@ class Pipeline:
     def _non_stream(self, payload: dict, task: Optional[str], chat_id: str = "") -> str:
         url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
         payload["stream"] = False
+        chat_lock = self._get_chat_lock(chat_id) if chat_id else None
+        if chat_lock is not None:
+            chat_lock.acquire()
         try:
             with httpx.Client(timeout=httpx.Timeout(self.valves.TIMEOUT)) as client:
-                resp = client.post(url, json=payload, headers=self._make_headers())
-                if resp.status_code != 200:
-                    return f"Error: Server error ({resp.status_code}): {resp.text}"
+                stale_retry_used = False
+                while True:
+                    resp = client.post(url, json=payload, headers=self._make_headers())
+                    if resp.status_code == 200:
+                        break
+                    body_text = resp.text
+                    if (
+                        resp.status_code == 409
+                        and not stale_retry_used
+                        and "Stale previous_response_id" in body_text
+                    ):
+                        stale_retry_used = True
+                        log.warning(
+                            "[PIPE] 409 Stale previous_response_id; recovering and retrying (chat=%s)",
+                            chat_id,
+                        )
+                        payload = self._apply_stale_recovery(payload, body_text, chat_id)
+                        continue
+                    return f"Error: Server error ({resp.status_code}): {body_text}"
 
                 data = resp.json()
                 # Save response ID
@@ -1258,6 +1329,9 @@ class Pipeline:
         except Exception as e:
             log.error("Non-stream error: %s", e)
             return f"Error: {e}"
+        finally:
+            if chat_lock is not None:
+                chat_lock.release()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1271,3 +1345,35 @@ class Pipeline:
         if extra:
             headers.update(extra)
         return headers
+
+    # Matches the gateway's response ID format: resp_{uuid}_{turn}.
+    # Used to parse the latest id out of a 409 Stale error body for retry.
+    _STALE_RESP_ID_RE = re.compile(r"resp_[0-9a-fA-F\-]{8,}_\d+")
+
+    def _get_chat_lock(self, chat_id: str) -> threading.Lock:
+        with self._chat_locks_guard:
+            lock = self._chat_locks.get(chat_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._chat_locks[chat_id] = lock
+            return lock
+
+    @classmethod
+    def _parse_stale_latest_id(cls, body_text: str) -> Optional[str]:
+        m = cls._STALE_RESP_ID_RE.search(body_text or "")
+        return m.group(0) if m else None
+
+    def _apply_stale_recovery(
+        self, payload: dict, body_text: str, chat_id: str
+    ) -> dict:
+        """Rewrite *payload* after a 409 Stale response and sync the
+        in-memory response-id tracker.  Returns the payload to retry with.
+        """
+        latest = self._parse_stale_latest_id(body_text)
+        if latest:
+            if chat_id:
+                self._response_ids[chat_id] = latest
+            return {**payload, "previous_response_id": latest}
+        if chat_id:
+            self._response_ids.pop(chat_id, None)
+        return {k: v for k, v in payload.items() if k != "previous_response_id"}
