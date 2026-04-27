@@ -1122,16 +1122,24 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 )
 
     def _render_ask_user_question(self, fc_item: dict) -> str:
-        """Render an AskUserQuestion function_call as markdown for Open WebUI.
+        """Render an AskUserQuestion function_call for Open WebUI.
 
-        The gateway emits a function_call output item with name="AskUserQuestion"
-        (or a permission-style prompt) and a JSON arguments payload that may
-        contain a single question or a ``questions`` array, each with optional
-        ``options`` and ``multiSelect`` fields. Open WebUI's pipe contract
-        only yields text, so we render a simple markdown block; the user
-        replies with plain text and pipe() routes it as function_call_output.
+        Emits a ``<details type="ask_user_question">`` block. The Svelte
+        token dispatcher (``MarkdownTokens.svelte``) intercepts this and
+        renders an interactive ``AskUserQuestionCard`` with clickable
+        options. Falls back to readable markdown if the body fails to
+        parse on the frontend.
+
+        The body JSON shape mirrors a2a-agent's ``pendingQuestion``::
+
+          {"callId": "...",
+           "name": "AskUserQuestion",
+           "questions": [{"question": "...",
+                          "options": [{"label": "...", "description": "..."}],
+                          "multiSelect": false}]}
         """
         name = fc_item.get("name", "AskUserQuestion")
+        call_id = fc_item.get("call_id", "")
         try:
             args = json.loads(fc_item.get("arguments", "{}") or "{}")
         except (json.JSONDecodeError, TypeError):
@@ -1139,60 +1147,71 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
 
         questions_list = args.get("questions")
         if isinstance(questions_list, list) and questions_list:
-            items = questions_list
+            raw_items = questions_list
         else:
-            items = [args]
+            raw_items = [args]
 
-        lines: list[str] = ["", "---", ""]
-        if name == "AskUserQuestion":
-            lines.append("**❓ 추가 입력이 필요합니다**")
-        else:
-            lines.append(f"**❓ 권한/입력 요청: `{name}`**")
-        lines.append("")
-
-        rendered_any = False
-        for idx, q in enumerate(items, start=1):
+        normalized: list[dict] = []
+        for q in raw_items:
             if not isinstance(q, dict):
                 continue
             question_text = q.get("question") or q.get("prompt") or ""
-            if not question_text and len(items) == 1:
-                # Some permission prompts carry the message under a different key.
-                question_text = json.dumps(q, ensure_ascii=False)
-            if not question_text:
-                continue
-            rendered_any = True
-            prefix = f"**Q{idx}.** " if len(items) > 1 else ""
-            lines.append(f"{prefix}{question_text}")
-            options = q.get("options")
-            if isinstance(options, list) and options:
-                multi = bool(q.get("multiSelect"))
-                hint = "(여러 개 선택 가능 — 쉼표로 구분해 답변)" if multi else "(하나 선택)"
-                lines.append(f"  {hint}")
-                for opt in options:
+            options_raw = q.get("options")
+            options: list[dict] = []
+            if isinstance(options_raw, list):
+                for opt in options_raw:
                     if isinstance(opt, dict):
                         label = opt.get("label", "")
                         desc = opt.get("description", "")
                     else:
                         label = str(opt)
                         desc = ""
-                    if not label:
-                        continue
-                    if desc:
-                        lines.append(f"  - **{label}** — {desc}")
-                    else:
-                        lines.append(f"  - **{label}**")
-            lines.append("")
+                    if label:
+                        options.append({"label": label, "description": desc})
+            normalized.append({
+                "question": question_text,
+                "options": options,
+                "multiSelect": bool(q.get("multiSelect")),
+            })
 
-        if not rendered_any:
-            # Fallback: dump raw arguments so the user at least sees something.
-            lines.append("```json")
-            lines.append(json.dumps(args, ensure_ascii=False, indent=2))
-            lines.append("```")
-            lines.append("")
+        # Drop completely empty entries (no question text and no options) —
+        # except when they are the only item (permission prompts may carry
+        # the payload under unknown keys; we surface the raw args then).
+        if any(q.get("question") or q.get("options") for q in normalized):
+            normalized = [
+                q for q in normalized
+                if q.get("question") or q.get("options")
+            ]
 
-        lines.append("_답변을 입력하면 자동으로 이어서 진행됩니다._")
-        lines.append("")
-        return "\n".join(lines)
+        body = {
+            "callId": call_id,
+            "name": name,
+            "questions": normalized,
+            "raw": args if not normalized or not any(
+                q.get("question") for q in normalized
+            ) else None,
+        }
+        # Drop None values for a clean payload
+        body = {k: v for k, v in body.items() if v is not None}
+
+        body_json = json.dumps(body, ensure_ascii=False)
+
+        if name == "AskUserQuestion":
+            summary = "❓ 추가 입력이 필요합니다"
+        else:
+            summary = f"❓ 권한/입력 요청: {name}"
+
+        # Wrap in <details> so Open WebUI's MarkdownTokens.svelte can
+        # dispatch on attributes.type. The body is JSON; the Svelte side
+        # strips <summary> and JSON.parse()s the rest. ``done="true"`` keeps
+        # the card interactive once the message stream finishes.
+        return (
+            "\n\n"
+            f'<details type="ask_user_question" done="true">\n'
+            f"<summary>{summary}</summary>\n"
+            f"{body_json}\n"
+            "</details>\n\n"
+        )
 
     def _render_system_event(
         self,

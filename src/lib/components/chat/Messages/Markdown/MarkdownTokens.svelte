@@ -22,6 +22,7 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
 	import ConsecutiveDetailsGroup from './ConsecutiveDetailsGroup.svelte';
+	import AskUserQuestionCard from './AskUserQuestionCard.svelte';
 
 	import HtmlToken from './HTMLToken.svelte';
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
@@ -492,6 +493,21 @@
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
 		<!-- Image Gallery: no visible button, handled via ToolExplorer thumbnail click -->
+	{:else if token.type === 'details' && token?.attributes?.type === 'ask_user_question'}
+		<!-- AskUserQuestion: interactive card with clickable options -->
+		{@const questionData = (() => {
+			try {
+				const text = decode(token?.text || '')
+					.replace(/<summary>.*?<\/summary>/gi, '')
+					.trim();
+				return JSON.parse(text);
+			} catch {
+				return null;
+			}
+		})()}
+		{#if questionData}
+			<AskUserQuestionCard data={questionData} disabled={!done} />
+		{/if}
 	{:else if token.type === 'details'}
 		{@const textContent = getDetailTextContent(token)}
 
