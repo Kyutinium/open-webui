@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field, field_validator
 
 import httpx
 
+# Hidden marker prefix sent by AskUserQuestionCard.svelte. Must stay byte-for-
+# byte in sync with ``ANSWER_MARKER`` in that component. The leading char is
+# U+200B (zero-width space) so any accidental display is invisible.
+_ASK_USER_QUESTION_ANSWER_MARKER = "​::AUQ_ANSWER::"
+
 # Regex to detect SDK tool-execution noise that leaks into text deltas:
 #   - Bare tool names like "mcp__mcp_router__cql", "Read", "Bash"
 #   - "Executing tool_name..." status lines
@@ -682,6 +687,17 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     parts = [p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"]
                     last_user_content = "\n".join(parts)
                 break
+
+        # AskUserQuestionCard prefixes its replies with a hidden marker so the
+        # frontend can collapse the user-message bubble and the wrapper sees
+        # only the actual answer. Strip both the leading marker and any
+        # accidental whitespace; keep raw input intact otherwise.
+        if isinstance(last_user_content, str) and last_user_content.startswith(
+            _ASK_USER_QUESTION_ANSWER_MARKER
+        ):
+            last_user_content = last_user_content[
+                len(_ASK_USER_QUESTION_ANSWER_MARKER):
+            ].lstrip()
 
         # If the previous turn ended in requires_action (AskUserQuestion or
         # SDK permission prompt), the wrapper expects a function_call_output

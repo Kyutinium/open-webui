@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick, getContext } from 'svelte';
+	import { tick, getContext, onMount } from 'svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -14,6 +14,21 @@
 		raw?: unknown;
 	};
 	export let disabled: boolean = false;
+
+	// Hidden marker prefix added to the chat message that carries the user's
+	// answer. The pipeline strips this before forwarding to the wrapper, and
+	// UserMessage.svelte uses it to render a compact "answered" chip instead
+	// of a normal user message bubble. Must stay in sync with both sides.
+	const ANSWER_MARKER = '​::AUQ_ANSWER::';
+
+	// Meta options inserted by the model that look like "Other / 직접 입력"
+	// shouldn't be sent as the answer — clicking them should focus the
+	// custom-text input instead. claude-code's AskUserQuestion already adds
+	// an Other choice automatically; the model occasionally invents one.
+	const META_OPTION_PATTERN =
+		/^\s*(other|custom(\s*answer)?|free.?form|none\s*of\s*the\s*above|direct\s*input|input\s*manually|기타|직접\s*입력(할게요|하기|함)?|아무것도\s*아님)\s*$/i;
+
+	const isMetaOption = (label: string) => META_OPTION_PATTERN.test(label.trim());
 
 	type AnswerMap = Map<number, string>;
 	type SelectionMap = Map<number, Set<string>>;
@@ -30,12 +45,18 @@
 	let multiSelections: SelectionMap = new Map();
 	let customTexts: TextMap = new Map();
 	let submitted = false;
+	let focusedOption = 0; // 0..optionCount-1 for options, optionCount for input
+	let containerRef: HTMLDivElement | null = null;
+	let inputRef: HTMLInputElement | null = null;
+	const optionRefs: (HTMLButtonElement | null)[] = [];
 
 	$: current = questions[activeTab];
 	$: isReviewTab = isMulti && activeTab === REVIEW_TAB;
 	$: isDisabled = disabled || submitted;
 	$: allAnswered = questions.every((_, i) => answers.has(i));
 	$: answeredCount = answers.size;
+	$: optionCount = current?.options?.length ?? 0;
+	$: INPUT_INDEX = optionCount;
 
 	const isRecommended = (label: string): boolean =>
 		/\(Recommended\)\s*$/i.test(label) || /\(권장\)\s*$/.test(label);
@@ -56,14 +77,30 @@
 		else activeTab = REVIEW_TAB;
 	};
 
+	const focusInput = async () => {
+		await tick();
+		inputRef?.focus();
+		focusedOption = INPUT_INDEX;
+	};
+
 	const handleSingleSelect = (label: string) => {
 		if (isDisabled) return;
+		// Meta options ("Other", "직접 입력") shouldn't be submitted as the
+		// answer — they're a UX hint to type a custom value.
+		if (isMetaOption(label)) {
+			focusInput();
+			return;
+		}
 		setAnswer(activeTab, label);
 		advanceToNext(activeTab);
 	};
 
 	const handleMultiToggle = (label: string) => {
 		if (isDisabled) return;
+		if (isMetaOption(label)) {
+			focusInput();
+			return;
+		}
 		const next = new Map(multiSelections);
 		const cur = new Set(next.get(activeTab) || []);
 		if (cur.has(label)) cur.delete(label);
@@ -109,12 +146,16 @@
 				question: q.question,
 				answer: answers.get(i) || ''
 			}));
-			answerText = JSON.stringify(result, null, 2);
+			answerText = JSON.stringify(result);
 		}
+
+		// Prefix with the hidden marker so the pipeline can strip it and the
+		// UserMessage renderer can collapse the bubble.
+		const wireText = ANSWER_MARKER + answerText;
 
 		await tick();
 		try {
-			window.postMessage({ type: 'input:prompt:submit', text: answerText }, window.origin);
+			window.postMessage({ type: 'input:prompt:submit', text: wireText }, window.origin);
 		} catch (e) {
 			console.error('[AskUserQuestionCard] failed to post answer:', e);
 		}
@@ -131,6 +172,59 @@
 			handleCustomSubmit();
 		}
 	};
+
+	// Card-scoped keyboard navigation: ArrowUp/Down to move between options,
+	// Enter to select the focused option, ArrowLeft/Right for tab nav when
+	// multi-question. Mirrors a2a-agent's AskUserQuestionCard.tsx.
+	const handleCardKeydown = (event: KeyboardEvent) => {
+		if (isDisabled) return;
+		if (event.key === 'ArrowLeft') {
+			event.preventDefault();
+			if (isMulti) activeTab = Math.max(0, activeTab - 1);
+			focusedOption = 0;
+			return;
+		}
+		if (event.key === 'ArrowRight' && isMulti) {
+			event.preventDefault();
+			activeTab = Math.min(REVIEW_TAB, activeTab + 1);
+			focusedOption = 0;
+			return;
+		}
+		if (isReviewTab) return;
+		const maxIdx = INPUT_INDEX;
+		if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			focusedOption = Math.max(0, focusedOption - 1);
+		} else if (event.key === 'ArrowDown') {
+			event.preventDefault();
+			focusedOption = Math.min(maxIdx, focusedOption + 1);
+		} else if (event.key === 'Enter' && focusedOption < optionCount) {
+			event.preventDefault();
+			const opt = current?.options?.[focusedOption];
+			if (opt) {
+				if (current?.multiSelect) handleMultiToggle(opt.label);
+				else handleSingleSelect(opt.label);
+			}
+		}
+	};
+
+	// Move focus to the right element whenever focusedOption / tab change.
+	$: if (!isDisabled && !isReviewTab && typeof window !== 'undefined') {
+		tick().then(() => {
+			if (focusedOption < optionCount) optionRefs[focusedOption]?.focus();
+			else if (focusedOption === INPUT_INDEX) inputRef?.focus();
+		});
+	}
+
+	onMount(() => {
+		// Focus the first option on mount so keyboard nav is immediately usable.
+		if (!isDisabled) {
+			tick().then(() => {
+				if (optionCount > 0) optionRefs[0]?.focus();
+				else inputRef?.focus();
+			});
+		}
+	});
 
 	// Fallback rendering when there are no parsed questions (e.g. permission
 	// prompts with unknown shape). Show the raw payload as JSON.
@@ -154,7 +248,11 @@
 	</div>
 {:else}
 	<div
-		class="my-2 rounded-xl border transition-colors {isDisabled
+		bind:this={containerRef}
+		role="group"
+		tabindex="0"
+		on:keydown={handleCardKeydown}
+		class="my-2 rounded-xl border transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/30 {isDisabled
 			? 'border-gray-200/60 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/30'
 			: 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm'}"
 		data-testid="ask-user-question-card"
@@ -308,14 +406,16 @@
 
 				{#if current.options && current.options.length}
 					<div class="flex flex-col gap-1.5 mb-3">
-						{#each current.options as opt}
+						{#each current.options as opt, optIdx}
 							{@const recommended = isRecommended(opt.label)}
 							{@const displayLabel = stripRecommended(opt.label)}
 							{@const isSelected = current.multiSelect
 								? (multiSelections.get(activeTab)?.has(opt.label) ?? false)
 								: answers.get(activeTab) === opt.label}
+							{@const isFocused = focusedOption === optIdx}
 							<button
 								type="button"
+								bind:this={optionRefs[optIdx]}
 								disabled={isDisabled}
 								on:click={() =>
 									current.multiSelect
@@ -327,11 +427,13 @@
 									? isSelected
 										? 'border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
 										: 'border-gray-200/40 dark:border-gray-700/40 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-									: recommended
-										? 'border-blue-500/50 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30'
-										: isSelected
-											? 'border-blue-500/50 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-											: 'border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800/40'}"
+									: isFocused
+										? 'border-blue-500/60 bg-blue-50/50 dark:bg-blue-900/15 ring-1 ring-blue-500/30'
+										: recommended
+											? 'border-blue-500/50 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30'
+											: isSelected
+												? 'border-blue-500/50 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+												: 'border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800/40'}"
 							>
 								{#if current.multiSelect}
 									<span
@@ -378,11 +480,13 @@
 				{#if !isDisabled}
 					<div class="flex items-center gap-2">
 						<input
+							bind:this={inputRef}
 							type="text"
 							value={customTexts.get(activeTab) || ''}
 							on:input={(e) => handleCustomChange(e.currentTarget.value)}
 							on:keydown={handleEnterCustom}
-							placeholder="직접 입력 (Other)"
+							on:focus={() => (focusedOption = INPUT_INDEX)}
+							placeholder="선택지에 없으면 여기 직접 입력 후 Enter"
 							class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500"
 							data-testid="ask-user-question-custom-input"
 						/>
