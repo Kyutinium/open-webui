@@ -135,6 +135,13 @@ class Pipeline:
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
+        # Track pending AskUserQuestion function_calls per chat. When the
+        # gateway returns response.completed with status="requires_action",
+        # the user's next message must be routed back as function_call_output
+        # (matched by call_id) instead of a regular input. Without this, the
+        # SDK 0.1.57+ permission prompts (e.g. MEMORY.md sensitive write) get
+        # surfaced but the turn never closes.
+        self._pending_function_calls: dict[str, dict] = {}
 
     def pipes(self) -> list:
         return [
@@ -676,24 +683,54 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     last_user_content = "\n".join(parts)
                 break
 
-        payload = {
-            "model": self.valves.MODEL,
-            "input": last_user_content,
-            "stream": use_stream,
-        }
-
-        # Multi-turn: use previous_response_id for continuity
+        # If the previous turn ended in requires_action (AskUserQuestion or
+        # SDK permission prompt), the wrapper expects a function_call_output
+        # matched by call_id — not a fresh user message. Routing as a normal
+        # input here would either error or leave the function call dangling.
+        pending_fc = (
+            self._pending_function_calls.pop(chat_id, None) if chat_id else None
+        )
         prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
-        if prev_resp_id:
-            payload["previous_response_id"] = prev_resp_id
-        else:
-            # First turn: include system instructions if any
-            system_msg = next(
-                (m.get("content", "") for m in messages if m.get("role") == "system"),
-                None,
+
+        if pending_fc:
+            payload = {
+                "model": self.valves.MODEL,
+                "input": [
+                    {
+                        "type": "function_call_output",
+                        "call_id": pending_fc.get("call_id", ""),
+                        "output": last_user_content if isinstance(last_user_content, str)
+                        else json.dumps(last_user_content, ensure_ascii=False),
+                    }
+                ],
+                "stream": use_stream,
+            }
+            if prev_resp_id:
+                payload["previous_response_id"] = prev_resp_id
+            log.info(
+                "[PIPE] resuming function_call name=%s call_id=%s for chat=%s",
+                pending_fc.get("name", ""),
+                pending_fc.get("call_id", ""),
+                chat_id,
             )
-            if system_msg:
-                payload["instructions"] = system_msg
+        else:
+            payload = {
+                "model": self.valves.MODEL,
+                "input": last_user_content,
+                "stream": use_stream,
+            }
+
+            # Multi-turn: use previous_response_id for continuity
+            if prev_resp_id:
+                payload["previous_response_id"] = prev_resp_id
+            else:
+                # First turn: include system instructions if any
+                system_msg = next(
+                    (m.get("content", "") for m in messages if m.get("role") == "system"),
+                    None,
+                )
+                if system_msg:
+                    payload["instructions"] = system_msg
 
         # User identity for workspace isolation
         if owui_username:
@@ -781,6 +818,43 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             if resp_id and chat_id:
                                 self._response_ids[chat_id] = resp_id
                                 log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
+
+                            # Detect AskUserQuestion (requires_action). The
+                            # gateway/SDK surfaces permission prompts and
+                            # explicit AskUserQuestion calls as a function_call
+                            # output item with status="requires_action". The
+                            # user's next message is routed as function_call_output
+                            # in pipe() so the wrapper turn can close.
+                            if resp_obj.get("status") == "requires_action":
+                                fc_item = None
+                                for item in resp_obj.get("output", []):
+                                    if (
+                                        isinstance(item, dict)
+                                        and item.get("type") == "function_call"
+                                    ):
+                                        fc_item = item
+                                        break
+                                if fc_item and chat_id:
+                                    self._pending_function_calls[chat_id] = {
+                                        "call_id": fc_item.get("call_id", ""),
+                                        "name": fc_item.get("name", ""),
+                                        "arguments": fc_item.get("arguments", "{}"),
+                                    }
+                                    log.info(
+                                        "[PIPE] pending function_call name=%s call_id=%s for chat=%s",
+                                        fc_item.get("name", ""),
+                                        fc_item.get("call_id", ""),
+                                        chat_id,
+                                    )
+                                    rendered = self._render_ask_user_question(fc_item)
+                                    if rendered:
+                                        if thought_wrapped and not response_tag_sent:
+                                            if text_buffer:
+                                                yield text_buffer
+                                                text_buffer = ""
+                                            yield "\n</thought>\n\n"
+                                            response_tag_sent = True
+                                        yield rendered
                             continue
 
                         if event_type == "response.failed":
@@ -1046,6 +1120,79 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     current=match["current"],
                     base_url=match["base_url"],
                 )
+
+    def _render_ask_user_question(self, fc_item: dict) -> str:
+        """Render an AskUserQuestion function_call as markdown for Open WebUI.
+
+        The gateway emits a function_call output item with name="AskUserQuestion"
+        (or a permission-style prompt) and a JSON arguments payload that may
+        contain a single question or a ``questions`` array, each with optional
+        ``options`` and ``multiSelect`` fields. Open WebUI's pipe contract
+        only yields text, so we render a simple markdown block; the user
+        replies with plain text and pipe() routes it as function_call_output.
+        """
+        name = fc_item.get("name", "AskUserQuestion")
+        try:
+            args = json.loads(fc_item.get("arguments", "{}") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+
+        questions_list = args.get("questions")
+        if isinstance(questions_list, list) and questions_list:
+            items = questions_list
+        else:
+            items = [args]
+
+        lines: list[str] = ["", "---", ""]
+        if name == "AskUserQuestion":
+            lines.append("**❓ 추가 입력이 필요합니다**")
+        else:
+            lines.append(f"**❓ 권한/입력 요청: `{name}`**")
+        lines.append("")
+
+        rendered_any = False
+        for idx, q in enumerate(items, start=1):
+            if not isinstance(q, dict):
+                continue
+            question_text = q.get("question") or q.get("prompt") or ""
+            if not question_text and len(items) == 1:
+                # Some permission prompts carry the message under a different key.
+                question_text = json.dumps(q, ensure_ascii=False)
+            if not question_text:
+                continue
+            rendered_any = True
+            prefix = f"**Q{idx}.** " if len(items) > 1 else ""
+            lines.append(f"{prefix}{question_text}")
+            options = q.get("options")
+            if isinstance(options, list) and options:
+                multi = bool(q.get("multiSelect"))
+                hint = "(여러 개 선택 가능 — 쉼표로 구분해 답변)" if multi else "(하나 선택)"
+                lines.append(f"  {hint}")
+                for opt in options:
+                    if isinstance(opt, dict):
+                        label = opt.get("label", "")
+                        desc = opt.get("description", "")
+                    else:
+                        label = str(opt)
+                        desc = ""
+                    if not label:
+                        continue
+                    if desc:
+                        lines.append(f"  - **{label}** — {desc}")
+                    else:
+                        lines.append(f"  - **{label}**")
+            lines.append("")
+
+        if not rendered_any:
+            # Fallback: dump raw arguments so the user at least sees something.
+            lines.append("```json")
+            lines.append(json.dumps(args, ensure_ascii=False, indent=2))
+            lines.append("```")
+            lines.append("")
+
+        lines.append("_답변을 입력하면 자동으로 이어서 진행됩니다._")
+        lines.append("")
+        return "\n".join(lines)
 
     def _render_system_event(
         self,
