@@ -442,6 +442,11 @@ if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
             # Opt-in: reuse connections across queries so PBKDF2 key
             # derivation only fires once per pooled connection.  Mirrors
             # the sync-engine pool sizing so behaviour is consistent.
+            #
+            # ``poolclass=QueuePool`` is mandatory here: with a custom
+            # ``creator`` SQLAlchemy otherwise auto-selects ``StaticPool``
+            # for SQLite (which doesn't accept pool_size / max_overflow
+            # / pool_timeout and would raise TypeError on engine init).
             _sqlcipher_async_pool_size = (
                 DATABASE_POOL_SIZE
                 if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0
@@ -450,6 +455,7 @@ if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
             async_engine = create_async_engine(
                 ASYNC_SQLALCHEMY_DATABASE_URL,
                 creator=create_sqlcipher_connection,
+                poolclass=QueuePool,
                 pool_size=_sqlcipher_async_pool_size,
                 max_overflow=DATABASE_POOL_MAX_OVERFLOW,
                 pool_timeout=DATABASE_POOL_TIMEOUT,
