@@ -23,7 +23,6 @@ from open_webui.env import (
     DATABASE_SQLITE_PRAGMA_TEMP_STORE,
     DATABASE_SQLITE_PRAGMA_MMAP_SIZE,
     DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT,
-    DATABASE_SQLCIPHER_KDF_ITER,
     ENABLE_DB_MIGRATIONS,
 )
 from peewee_migrate import Router
@@ -293,13 +292,6 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
         import sqlcipher3
 
         conn = sqlcipher3.connect(db_path, check_same_thread=False)
-        # ``PRAGMA kdf_iter`` must be set *before* ``PRAGMA key`` so the
-        # configured iteration count drives key derivation.  When the env
-        # var is empty we leave SQLCipher's built-in default in place,
-        # which keeps backward compatibility with DBs encrypted at the
-        # default iteration count.
-        if DATABASE_SQLCIPHER_KDF_ITER:
-            conn.execute(f'PRAGMA kdf_iter = {DATABASE_SQLCIPHER_KDF_ITER}')
         # ``PRAGMA key`` must run before any other data access so the
         # encryption layer is initialised first.
         conn.execute(f"PRAGMA key = '{database_password}'")
