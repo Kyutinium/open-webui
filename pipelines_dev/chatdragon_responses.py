@@ -32,6 +32,14 @@ import httpx
 # U+200B (zero-width space) so any accidental display is invisible.
 _ASK_USER_QUESTION_ANSWER_MARKER = "​::AUQ_ANSWER::"
 
+# Regex for parsing the gateway's 409 "Stale previous_response_id" body.  The
+# wrapper helpfully includes the latest valid response_id so we can recover
+# without forcing a fresh session.  Example body::
+#     {"error":{"message":"Stale previous_response_id: only the latest
+#      response (resp_<uuid>_<turn>) can be continued","type":"api_error",
+#      "code":"409"}}
+_STALE_RESP_ID_RE = re.compile(r"\(resp_([0-9a-f-]+)_(\d+)\) can be continued")
+
 # Regex to detect SDK tool-execution noise that leaks into text deltas:
 #   - Bare tool names like "mcp__mcp_router__cql", "Read", "Bash"
 #   - "Executing tool_name..." status lines
@@ -155,6 +163,65 @@ class Pipeline:
                 "name": "Chatdragon Responses",
             }
         ]
+
+    # ------------------------------------------------------------------
+    # /v1/responses POST helpers
+    # ------------------------------------------------------------------
+
+    def _open_responses_stream(self, client, url, payload, chat_id):
+        """Open a streaming POST to ``/v1/responses``, retrying once on
+        409 ``Stale previous_response_id``.
+
+        Returns a tuple ``(cm, resp)`` where ``cm`` is the active
+        context-manager that the caller MUST close (``cm.__exit__``)
+        when done iterating, and ``resp`` is the underlying
+        ``httpx.Response`` ready for ``iter_lines()``.
+
+        Raises ``Exception`` on any non-200 response that isn't a
+        recoverable 409 stale.
+
+        Why retry: even with the task-aware ``previous_response_id``
+        chain skip in :meth:`pipe`, a stale 409 can still happen when
+        an external writer (concurrent tab, server-side rehydrate,
+        admin tool) advances the wrapper's response counter without
+        us seeing it.  The 409 body includes the latest valid
+        response_id, so a one-shot retry with the corrected payload
+        recovers transparently.
+        """
+        for attempt in range(2):
+            cm = client.stream(
+                "POST", url, json=payload, headers=self._make_headers()
+            )
+            resp = cm.__enter__()
+            if resp.status_code == 200:
+                return cm, resp
+
+            body_text = resp.read().decode()
+            cm.__exit__(None, None, None)
+
+            if (
+                attempt == 0
+                and resp.status_code == 409
+                and chat_id
+                and "previous_response_id" in payload
+            ):
+                m = _STALE_RESP_ID_RE.search(body_text)
+                if m:
+                    latest = f"resp_{m.group(1)}_{m.group(2)}"
+                    log.warning(
+                        "[PIPE] 409 stale prev=%s -> recovering with latest=%s for chat=%s",
+                        payload.get("previous_response_id"),
+                        latest,
+                        chat_id,
+                    )
+                    self._response_ids[chat_id] = latest
+                    payload["previous_response_id"] = latest
+                    continue
+
+            raise Exception(f"Server error ({resp.status_code}): {body_text}")
+
+        # Defensive: the loop above either returns or raises.
+        raise Exception("Stale 409 retry exhausted unexpectedly")
 
     # ------------------------------------------------------------------
     # Context injection
@@ -736,10 +803,19 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 "stream": use_stream,
             }
 
-            # Multi-turn: use previous_response_id for continuity
-            if prev_resp_id:
+            # Multi-turn: chain ``previous_response_id`` for normal chat
+            # turns only.  Task requests (title generation, follow-up
+            # suggestions, …) get sent as standalone calls — chaining
+            # them would (a) advance the wrapper's response counter and
+            # leave the chat's stored ``response_id`` stale, producing a
+            # 409 ``Stale previous_response_id`` on the next user turn,
+            # and (b) pollute the chat's conversation history with the
+            # task's prompt and reply.  Open WebUI already embeds the
+            # full chat content into the task prompt, so dropping the
+            # chain costs nothing.
+            if prev_resp_id and not __task__:
                 payload["previous_response_id"] = prev_resp_id
-            else:
+            elif not __task__:
                 # First turn: include system instructions if any
                 system_msg = next(
                     (m.get("content", "") for m in messages if m.get("role") == "system"),
@@ -798,10 +874,8 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 pool=30.0,
             )
             with httpx.Client(timeout=timeout) as client:
-                with client.stream("POST", url, json=payload, headers=self._make_headers()) as resp:
-                    if resp.status_code != 200:
-                        body_text = resp.read().decode()
-                        raise Exception(f"Server error ({resp.status_code}): {body_text}")
+                resp_cm, resp = self._open_responses_stream(client, url, payload, chat_id)
+                try:
 
                     # Responses API uses SSE with event: type\ndata: json
                     current_event_type = ""
@@ -827,11 +901,18 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         event_type = event.get("type", current_event_type)
                         log.info("[PIPE-DEBUG] event_type=%s", event_type)
 
-                        # Save response ID for multi-turn continuity
+                        # Save response ID for multi-turn continuity.
+                        # Skip for task requests: a task response advances
+                        # the wrapper-side counter but its response_id
+                        # is not the one a subsequent chat turn should
+                        # chain off — saving it would mix task prompts
+                        # into the chat history and (worse) eventually
+                        # produce a 409 Stale previous_response_id on
+                        # the next chat turn.
                         if event_type == "response.completed":
                             resp_obj = event.get("response", {})
                             resp_id = resp_obj.get("id", "")
-                            if resp_id and chat_id:
+                            if resp_id and chat_id and not task:
                                 self._response_ids[chat_id] = resp_id
                                 log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
 
@@ -1119,6 +1200,11 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         else:
                             full_text_acc += chunk
                             yield chunk
+                finally:
+                    # Close the streaming response we opened via
+                    # _open_responses_stream — its context manager isn't
+                    # bound to a ``with`` here so we close it manually.
+                    resp_cm.__exit__(None, None, None)
 
         except Exception as e:
             log.error("Stream error: %s", e)
@@ -1486,9 +1572,12 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     return f"Error: Server error ({resp.status_code}): {resp.text}"
 
                 data = resp.json()
-                # Save response ID
+                # Save response ID — skip for task requests so task
+                # responses don't displace the chat's chained response
+                # and trigger a 409 on the next user turn (see _stream
+                # for the full reasoning).
                 resp_id = data.get("id", "")
-                if resp_id and chat_id:
+                if resp_id and chat_id and not task:
                     self._response_ids[chat_id] = resp_id
 
                 # Extract text from output items
