@@ -403,6 +403,23 @@ DATABASE_SQLITE_PRAGMA_MMAP_SIZE = os.environ.get('DATABASE_SQLITE_PRAGMA_MMAP_S
 # truncated.  67108864 ≈ 64 MB.  Set to -1 for no limit (SQLite default).
 DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT = os.environ.get('DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT', '67108864')
 
+# Opt-in QueuePool for the *async* SQLCipher engine.  By default the async
+# engine uses ``NullPool`` because sqlcipher3 historically had thread-safety
+# issues with pool reuse — but this means every async query opens a fresh
+# connection, paying ~115ms of PBKDF2 key derivation on the first page read.
+# A page load issuing ~20 queries can therefore burn ~2 seconds purely on
+# KDF overhead.
+#
+# When this flag is on, the async engine uses ``QueuePool`` with the
+# ``DATABASE_POOL_SIZE`` / ``DATABASE_POOL_MAX_OVERFLOW`` values that the
+# sync engine already trusts.  Pooled connections are reused across
+# queries, so KDF runs once per connection per its lifetime instead of
+# once per query.
+#
+# Stability note: enable in dev / staging first and watch for sqlcipher3
+# segfaults under concurrent load before flipping it on in production.
+DATABASE_SQLCIPHER_USE_POOL = os.environ.get('DATABASE_SQLCIPHER_USE_POOL', 'False').lower() == 'true'
+
 DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL = os.environ.get('DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL', None)
 if DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL is not None:
     try:

@@ -23,6 +23,7 @@ from open_webui.env import (
     DATABASE_SQLITE_PRAGMA_TEMP_STORE,
     DATABASE_SQLITE_PRAGMA_MMAP_SIZE,
     DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT,
+    DATABASE_SQLCIPHER_USE_POOL,
     ENABLE_DB_MIGRATIONS,
 )
 from peewee_migrate import Router
@@ -437,11 +438,30 @@ ASYNC_SQLALCHEMY_DATABASE_URL = _make_async_url(
 
 if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
     if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
-        async_engine = create_async_engine(
-            ASYNC_SQLALCHEMY_DATABASE_URL,
-            creator=create_sqlcipher_connection,
-            poolclass=NullPool,
-        )
+        if DATABASE_SQLCIPHER_USE_POOL:
+            # Opt-in: reuse connections across queries so PBKDF2 key
+            # derivation only fires once per pooled connection.  Mirrors
+            # the sync-engine pool sizing so behaviour is consistent.
+            _sqlcipher_async_pool_size = (
+                DATABASE_POOL_SIZE
+                if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0
+                else 20
+            )
+            async_engine = create_async_engine(
+                ASYNC_SQLALCHEMY_DATABASE_URL,
+                creator=create_sqlcipher_connection,
+                pool_size=_sqlcipher_async_pool_size,
+                max_overflow=DATABASE_POOL_MAX_OVERFLOW,
+                pool_timeout=DATABASE_POOL_TIMEOUT,
+                pool_recycle=DATABASE_POOL_RECYCLE,
+                pool_pre_ping=True,
+            )
+        else:
+            async_engine = create_async_engine(
+                ASYNC_SQLALCHEMY_DATABASE_URL,
+                creator=create_sqlcipher_connection,
+                poolclass=NullPool,
+            )
     else:
         _sqlite_pool_size = DATABASE_POOL_SIZE if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0 else 512
         async_engine = create_async_engine(
