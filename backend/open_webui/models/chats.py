@@ -889,13 +889,29 @@ class ChatTable:
 
     async def is_chat_owner(self, id: str, user_id: str, db: Optional[AsyncSession] = None) -> bool:
         """
-        Lightweight ownership check — uses EXISTS subquery instead of loading
-        the full Chat row (which includes the potentially large JSON blob).
+        Lightweight ownership check — fetches just the chat id column for
+        the matching row (limit 1) so the large JSON blob isn't
+        materialized.
+
+        We deliberately avoid ``select(exists())`` + ``.scalar()`` here:
+        on the SQLCipher async engine that combination triggers
+        ``cursor._async_soft_close`` which the underlying sqlcipher3
+        cursor doesn't implement, and the surrounding except silently
+        swallows the AttributeError — meaning this function would always
+        return False, so every non-admin user would hit a 404
+        "Something went wrong :/" on the second turn of any chat.  Using
+        ``select(Chat.id).limit(1)`` + ``.scalars().first()`` goes
+        through a result-iteration path that works correctly with the
+        sync sqlcipher3 cursor.
         """
         try:
             async with get_async_db_context(db) as db:
-                result = await db.execute(select(exists().where(and_(Chat.id == id, Chat.user_id == user_id))))
-                return result.scalar()
+                result = await db.execute(
+                    select(Chat.id)
+                    .where(and_(Chat.id == id, Chat.user_id == user_id))
+                    .limit(1)
+                )
+                return result.scalars().first() is not None
         except Exception:
             return False
 
