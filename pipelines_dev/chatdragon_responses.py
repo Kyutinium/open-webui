@@ -1060,10 +1060,23 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
 
                         if thought_wrapped:
                             if response_tag_sent:
-                                chunk = chunk.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
-                                if chunk:
-                                    full_text_acc += chunk
-                                    yield chunk
+                                # Strip full tags and hold back trailing chars
+                                # that could be the start of a tag split across
+                                # the next chunk (e.g. "</res" + "ponse>").
+                                text_buffer += chunk
+                                text_buffer = text_buffer.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
+                                safe_len = len(text_buffer)
+                                max_tag_len = max(len(RESPONSE_TAG), len(RESPONSE_CLOSE_TAG))
+                                for k in range(max(0, safe_len - max_tag_len + 1), safe_len):
+                                    tail = text_buffer[k:]
+                                    if RESPONSE_TAG.startswith(tail) or RESPONSE_CLOSE_TAG.startswith(tail):
+                                        safe_len = k
+                                        break
+                                if safe_len > 0:
+                                    to_yield = text_buffer[:safe_len]
+                                    full_text_acc += to_yield
+                                    yield to_yield
+                                    text_buffer = text_buffer[safe_len:]
                             elif chunk.startswith(TOOL_DETAILS_PREFIX):
                                 # Tool <details> blocks bypass the buffer
                                 if text_buffer:
@@ -1080,10 +1093,24 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                         yield before
                                     yield "\n</thought>\n\n"
                                     response_tag_sent = True
-                                    if after:
-                                        full_text_acc += after
-                                        yield after
                                     text_buffer = ""
+                                    if after:
+                                        # Re-enter response phase with the
+                                        # tail; sanitize close tag and hold
+                                        # back any partial-tag prefix.
+                                        text_buffer = after.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
+                                        safe_len = len(text_buffer)
+                                        max_tag_len = max(len(RESPONSE_TAG), len(RESPONSE_CLOSE_TAG))
+                                        for k in range(max(0, safe_len - max_tag_len + 1), safe_len):
+                                            tail = text_buffer[k:]
+                                            if RESPONSE_TAG.startswith(tail) or RESPONSE_CLOSE_TAG.startswith(tail):
+                                                safe_len = k
+                                                break
+                                        if safe_len > 0:
+                                            to_yield = text_buffer[:safe_len]
+                                            full_text_acc += to_yield
+                                            yield to_yield
+                                            text_buffer = text_buffer[safe_len:]
                                 elif len(text_buffer) > BUFFER_SIZE:
                                     safe_len = len(text_buffer) - len(RESPONSE_TAG)
                                     if safe_len > 0:
@@ -1111,6 +1138,15 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         full_text_acc += text_buffer
                         yield text_buffer
                     yield "\n</thought>"
+            elif thought_wrapped and response_tag_sent and text_buffer:
+                # Response phase ended with a held-back partial-tag prefix
+                # that turned out to be plain text. Strip any complete tags
+                # defensively and flush.
+                text_buffer = text_buffer.replace(RESPONSE_CLOSE_TAG, "").replace(RESPONSE_TAG, "")
+                if text_buffer:
+                    full_text_acc += text_buffer
+                    yield text_buffer
+                text_buffer = ""
 
             # (tool_explorer tags emitted live during streaming)
 
