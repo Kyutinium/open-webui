@@ -219,6 +219,33 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
     # Extract database path from SQLCipher URL
     db_path = SQLALCHEMY_DATABASE_URL.replace('sqlite+sqlcipher://', '')
 
+    # Patch sqlcipher3's sync Cursor to satisfy SQLAlchemy's async result
+    # handler.  ``_ensure_sync_result`` (sqlalchemy.ext.asyncio.result) calls
+    # ``await cursor._async_soft_close()`` after execute() so it can release
+    # the cursor inside the asyncio event loop.  aiosqlite provides this on
+    # its async cursor wrapper, but sqlcipher3 ships only the sync DBAPI
+    # cursor — so any async query that hits ``_ensure_sync_result``
+    # (notably ``.scalar()`` on the result of ``select(exists())``,
+    # ``select(func.count())``, etc.) raises::
+    #     AttributeError: 'sqlcipher3.dbapi2.Cursor' object has no attribute
+    #     '_async_soft_close'
+    # which the surrounding try/except in models silently swallows, leading
+    # to bizarre symptoms (e.g. ``is_chat_owner`` always returning False so
+    # non-admin users hit a 404 "Something went wrong :/" on the second
+    # turn of any chat).  Adding a no-op coroutine that delegates to the
+    # sync ``close()`` makes the wrapper happy without changing the
+    # underlying cursor lifecycle.
+    import sqlcipher3.dbapi2 as _sqlcipher_dbapi2
+
+    if not hasattr(_sqlcipher_dbapi2.Cursor, '_async_soft_close'):
+        async def _sqlcipher_async_soft_close(self):
+            try:
+                self.close()
+            except Exception:
+                pass
+
+        _sqlcipher_dbapi2.Cursor._async_soft_close = _sqlcipher_async_soft_close
+
     # Create a custom creator function that uses sqlcipher3
     def create_sqlcipher_connection():
         import sqlcipher3
