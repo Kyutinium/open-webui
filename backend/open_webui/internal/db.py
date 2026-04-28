@@ -292,7 +292,44 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
         import sqlcipher3
 
         conn = sqlcipher3.connect(db_path, check_same_thread=False)
+        # ``PRAGMA key`` must run before any other data access so the
+        # encryption layer is initialised first.
         conn.execute(f"PRAGMA key = '{database_password}'")
+
+        # Apply the same performance PRAGMAs the regular SQLite branch
+        # registers via ``event.listens_for(..., 'connect')``.  Without
+        # these the SQLCipher engine runs with default journal_mode
+        # (rollback), tiny ~2MB cache, no mmap, and synchronous=FULL —
+        # which is noticeably slower than a non-encrypted SQLite engine
+        # because every page miss costs a disk read *and* AES decrypt.
+        try:
+            cur = conn.cursor()
+            try:
+                if DATABASE_ENABLE_SQLITE_WAL:
+                    cur.execute('PRAGMA journal_mode=WAL')
+                else:
+                    cur.execute('PRAGMA journal_mode=DELETE')
+                if DATABASE_SQLITE_PRAGMA_SYNCHRONOUS:
+                    cur.execute(f'PRAGMA synchronous={DATABASE_SQLITE_PRAGMA_SYNCHRONOUS}')
+                if DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT:
+                    cur.execute(f'PRAGMA busy_timeout={DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT}')
+                if DATABASE_SQLITE_PRAGMA_CACHE_SIZE:
+                    cur.execute(f'PRAGMA cache_size={DATABASE_SQLITE_PRAGMA_CACHE_SIZE}')
+                if DATABASE_SQLITE_PRAGMA_TEMP_STORE:
+                    cur.execute(f'PRAGMA temp_store={DATABASE_SQLITE_PRAGMA_TEMP_STORE}')
+                if DATABASE_SQLITE_PRAGMA_MMAP_SIZE:
+                    cur.execute(f'PRAGMA mmap_size={DATABASE_SQLITE_PRAGMA_MMAP_SIZE}')
+                if DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT:
+                    cur.execute(
+                        f'PRAGMA journal_size_limit={DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT}'
+                    )
+            finally:
+                cur.close()
+        except Exception:
+            # A failing PRAGMA must not block container startup — log and
+            # continue with whatever defaults are in effect.
+            log.warning('Failed to apply SQLite PRAGMAs to SQLCipher connection', exc_info=True)
+
         return _SQLCipherConnectionWrapper(conn)
 
     # The dummy "sqlite://" URL would cause SQLAlchemy to auto-select
