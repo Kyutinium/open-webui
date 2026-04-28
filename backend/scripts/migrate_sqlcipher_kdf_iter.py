@@ -162,29 +162,55 @@ def _attach_new_and_export(
     conn,
     new_path: Path,
     password: str,
+) -> None:
+    """Phase 1 of the migration: ``sqlcipher_export`` produces a new file
+    encrypted with whatever cipher params are in effect at the time of
+    ATTACH (i.e. SQLCipher's defaults, including the default kdf_iter).
+    Phase 2 (``_rekey_with_kdf_iter``) reopens the new file and re-keys
+    it with the target iteration count.
+
+    We split it in two phases because empirically neither
+    ``PRAGMA cipher_default_kdf_iter`` set on the source connection nor
+    ``PRAGMA new.kdf_iter`` set on the attached schema actually changes
+    the key derivation that fires inside ``ATTACH ... KEY '...'`` — the
+    file ends up encrypted at the default and any later verification at
+    the target iter count fails HMAC.
+    """
+    conn.execute(
+        f"ATTACH DATABASE '{new_path}' AS new KEY '{password}'"
+    )
+    conn.execute("SELECT sqlcipher_export('new')")
+    conn.execute('DETACH DATABASE new')
+
+
+def _rekey_with_kdf_iter(
+    new_path: Path,
+    password: str,
     new_kdf_iter: int,
 ) -> None:
-    # ``ATTACH ... KEY`` derives the key for the attached DB *immediately* —
-    # it uses whatever ``cipher_default_kdf_iter`` is in effect at that
-    # moment.  Setting ``PRAGMA new.kdf_iter`` *after* ATTACH only affects
-    # future rekey operations; the new DB has already been written with the
-    # old default.  So we must change the default *before* ATTACH so that
-    # the freshly-derived key matches the iteration count we want the file
-    # to be readable at later.
-    conn.execute(f'PRAGMA cipher_default_kdf_iter = {int(new_kdf_iter)}')
+    """Phase 2 of the migration: re-key the freshly-exported file using
+    the target ``kdf_iter``.  Because the file was just created with
+    SQLCipher's default kdf_iter, opening it with that default works;
+    we then set the new ``kdf_iter`` and ``PRAGMA rekey`` (with the same
+    password) — which re-encrypts every page using a key derived at the
+    new iteration count.  All subsequent opens must use the new value.
+    """
+    import sqlcipher3
+
+    conn = sqlcipher3.connect(str(new_path), check_same_thread=False)
     try:
-        conn.execute(
-            f"ATTACH DATABASE '{new_path}' AS new KEY '{password}'"
-        )
-        # Belt-and-suspenders: also set the schema-local kdf_iter so any
-        # subsequent rekey operation on the attached DB stays consistent.
-        conn.execute(f'PRAGMA new.kdf_iter = {int(new_kdf_iter)}')
-        conn.execute("SELECT sqlcipher_export('new')")
-        conn.execute('DETACH DATABASE new')
+        conn.execute(f"PRAGMA key = '{password}'")
+        # Sanity: key was correct, file is readable at default kdf_iter.
+        conn.execute('SELECT count(*) FROM sqlite_master').fetchone()
+        # The two PRAGMAs together: kdf_iter is the iteration count that
+        # ``rekey`` will use to derive the new key.  Re-keying with the
+        # same password but a different iteration count is the supported
+        # way to change kdf_iter on an existing SQLCipher database.
+        conn.execute(f'PRAGMA kdf_iter = {int(new_kdf_iter)}')
+        conn.execute(f"PRAGMA rekey = '{password}'")
+        conn.commit()
     finally:
-        # Restore the default so the rest of this connection (and any
-        # accidental future use) is unsurprising.
-        conn.execute('PRAGMA cipher_default_kdf_iter = 256000')
+        conn.close()
 
 
 def _swap_files(db_path: Path, new_path: Path) -> Path:
@@ -234,14 +260,20 @@ def main() -> None:
 
     _verify_payload(conn)
 
-    print('[migrate] exporting to new file ...')
+    print('[migrate] exporting to new file (phase 1) ...')
     started = time.monotonic()
     try:
-        _attach_new_and_export(conn, new_path, password, args.new_kdf_iter)
+        _attach_new_and_export(conn, new_path, password)
     finally:
         conn.close()
     export_secs = time.monotonic() - started
-    print(f'[migrate] export complete in {export_secs:.3f}s')
+    print(f'[migrate] phase 1 (export at default kdf_iter) took {export_secs:.3f}s')
+
+    print(f'[migrate] re-keying new file at kdf_iter={args.new_kdf_iter} (phase 2) ...')
+    started = time.monotonic()
+    _rekey_with_kdf_iter(new_path, password, args.new_kdf_iter)
+    rekey_secs = time.monotonic() - started
+    print(f'[migrate] phase 2 (rekey) took {rekey_secs:.3f}s')
 
     print('[migrate] verifying new file opens at new kdf_iter ...')
     verify_started = time.monotonic()
