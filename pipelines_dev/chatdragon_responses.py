@@ -785,8 +785,21 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         # SDK permission prompt), the wrapper expects a function_call_output
         # matched by call_id — not a fresh user message. Routing as a normal
         # input here would either error or leave the function call dangling.
+        #
+        # Crucially this only applies to *real user turns*: Open WebUI's
+        # auto-fired task requests (title generation, follow-up suggestions,
+        # tags, …) reuse the same chat_id and would otherwise race the
+        # user's actual reply for the pending function_call.  When that
+        # happens the task's prompt ("### Task: Generate a concise title…")
+        # gets routed as the function_call_output, the gateway-side hook
+        # compares it against ``"allow"``, denies, and the user's Allow
+        # click silently has no effect.  Skip the lookup for tasks so they
+        # go through the normal stateless path and leave the pending
+        # function_call alone for the user's next click.
         pending_fc = (
-            self._pending_function_calls.pop(chat_id, None) if chat_id else None
+            self._pending_function_calls.pop(chat_id, None)
+            if chat_id and not __task__
+            else None
         )
         prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
 
