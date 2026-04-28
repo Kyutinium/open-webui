@@ -403,6 +403,28 @@ DATABASE_SQLITE_PRAGMA_MMAP_SIZE = os.environ.get('DATABASE_SQLITE_PRAGMA_MMAP_S
 # truncated.  67108864 ≈ 64 MB.  Set to -1 for no limit (SQLite default).
 DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT = os.environ.get('DATABASE_SQLITE_PRAGMA_JOURNAL_SIZE_LIMIT', '67108864')
 
+# SQLCipher PRAGMA kdf_iter — number of PBKDF2 iterations used to derive the
+# AES key from DATABASE_PASSWORD.  SQLCipher 4.x default is 256000 (was 64000
+# in 3.x), which costs ~50–100 ms per ``PRAGMA key`` call.  With NullPool on
+# the async engine this fires on *every* query, so a single page load that
+# issues ~20 queries can pay 1–2 s of pure KDF overhead.
+#
+# This env var is **opt-in** (empty by default) so a freshly-cloned deployment
+# keeps using the SQLCipher default and existing DBs continue to open.
+# Switching it on requires re-encrypting the existing DB with the new
+# iteration count via ``scripts/migrate_sqlcipher_kdf_iter.py``.  Once
+# migrated, set this env var to the same value used during migration.
+#
+# Recommended values:
+#   - 4000  : ~16x faster connection open vs. 64000 default; safe when
+#             DATABASE_PASSWORD is a high-entropy random key (>= 128 bits).
+#   - 1000  : faster still; only safe with truly random keys (≥ 256 bits).
+#
+# WARNING: lowering kdf_iter weakens brute-force resistance against weak
+# passwords.  Only use a low value if DATABASE_PASSWORD is a random key
+# (e.g. ``openssl rand -hex 32``).
+DATABASE_SQLCIPHER_KDF_ITER = os.environ.get('DATABASE_SQLCIPHER_KDF_ITER', '').strip()
+
 DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL = os.environ.get('DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL', None)
 if DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL is not None:
     try:
