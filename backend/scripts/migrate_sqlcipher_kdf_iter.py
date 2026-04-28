@@ -164,16 +164,27 @@ def _attach_new_and_export(
     password: str,
     new_kdf_iter: int,
 ) -> None:
-    # ``ATTACH ... KEY`` derives a key for the attached DB using the *current*
-    # default kdf_iter.  We then bump kdf_iter on the attached schema before
-    # ``sqlcipher_export`` runs so every page in the new file is encrypted at
-    # the target iteration count.
-    conn.execute(
-        f"ATTACH DATABASE '{new_path}' AS new KEY '{password}'"
-    )
-    conn.execute(f'PRAGMA new.kdf_iter = {int(new_kdf_iter)}')
-    conn.execute("SELECT sqlcipher_export('new')")
-    conn.execute('DETACH DATABASE new')
+    # ``ATTACH ... KEY`` derives the key for the attached DB *immediately* —
+    # it uses whatever ``cipher_default_kdf_iter`` is in effect at that
+    # moment.  Setting ``PRAGMA new.kdf_iter`` *after* ATTACH only affects
+    # future rekey operations; the new DB has already been written with the
+    # old default.  So we must change the default *before* ATTACH so that
+    # the freshly-derived key matches the iteration count we want the file
+    # to be readable at later.
+    conn.execute(f'PRAGMA cipher_default_kdf_iter = {int(new_kdf_iter)}')
+    try:
+        conn.execute(
+            f"ATTACH DATABASE '{new_path}' AS new KEY '{password}'"
+        )
+        # Belt-and-suspenders: also set the schema-local kdf_iter so any
+        # subsequent rekey operation on the attached DB stays consistent.
+        conn.execute(f'PRAGMA new.kdf_iter = {int(new_kdf_iter)}')
+        conn.execute("SELECT sqlcipher_export('new')")
+        conn.execute('DETACH DATABASE new')
+    finally:
+        # Restore the default so the rest of this connection (and any
+        # accidental future use) is unsurprising.
+        conn.execute('PRAGMA cipher_default_kdf_iter = 256000')
 
 
 def _swap_files(db_path: Path, new_path: Path) -> Path:
