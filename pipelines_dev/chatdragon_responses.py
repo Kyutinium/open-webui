@@ -694,20 +694,32 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         messages[i] = {**messages[i], "content": content}
                         log.info("[IMAGE] rewrote message with %d image path(s)", len(saved_paths))
                 if isinstance(content, str):
-                    content = self._inject_context(
-                        content,
-                        __user__,
-                        __user_id__,
-                        __cookies__,
-                        dscrowd_token=dscrowd_token or None,
-                        mlm_username=owui_username or None,
-                    )
-                    if (
-                        self.valves.OUTPUT_FORMAT == "thought_wrapped"
-                        and self.valves.THOUGHT_WRAPPED_INSTRUCTION
-                        and not __task__
-                    ):
-                        content += self._get_thought_wrapped_instruction()
+                    # AskUserQuestionCard replies travel as a normal user
+                    # message with the hidden ANSWER_MARKER prefix; the
+                    # pipe later strips the marker and routes the body
+                    # straight to the wrapper as a function_call_output.
+                    # Injecting <mlm_username> / <dscrowd.token_key> /
+                    # the thought-wrapped instructions into that body
+                    # would corrupt the value the gateway-side hook
+                    # compares against (e.g. clicking "Allow" became
+                    # "Allow\n\n<mlm_username>…\n## 답변 작성 규칙…"
+                    # which the hook treats as "deny with reason"),
+                    # so skip both for marker-prefixed messages.
+                    if not content.startswith(_ASK_USER_QUESTION_ANSWER_MARKER):
+                        content = self._inject_context(
+                            content,
+                            __user__,
+                            __user_id__,
+                            __cookies__,
+                            dscrowd_token=dscrowd_token or None,
+                            mlm_username=owui_username or None,
+                        )
+                        if (
+                            self.valves.OUTPUT_FORMAT == "thought_wrapped"
+                            and self.valves.THOUGHT_WRAPPED_INSTRUCTION
+                            and not __task__
+                        ):
+                            content += self._get_thought_wrapped_instruction()
                     messages[i] = {**messages[i], "content": content}
                 elif isinstance(content, list):
                     # Multimodal content (e.g. image + text from VQA queries).
@@ -720,22 +732,25 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             break
                     if last_text_idx is not None:
                         text = content[last_text_idx].get("text", "")
-                        text = self._inject_context(
-                            text,
-                            __user__,
-                            __user_id__,
-                            __cookies__,
-                            dscrowd_token=dscrowd_token or None,
-                            mlm_username=owui_username or None,
-                        )
-                        if (
-                            self.valves.OUTPUT_FORMAT == "thought_wrapped"
-                            and self.valves.THOUGHT_WRAPPED_INSTRUCTION
-                            and not __task__
-                        ):
-                            text += self._get_thought_wrapped_instruction()
-                        content = list(content)
-                        content[last_text_idx] = {**content[last_text_idx], "text": text}
+                        # Same marker check as the str-content branch:
+                        # AskUserQuestion replies must travel clean.
+                        if not text.startswith(_ASK_USER_QUESTION_ANSWER_MARKER):
+                            text = self._inject_context(
+                                text,
+                                __user__,
+                                __user_id__,
+                                __cookies__,
+                                dscrowd_token=dscrowd_token or None,
+                                mlm_username=owui_username or None,
+                            )
+                            if (
+                                self.valves.OUTPUT_FORMAT == "thought_wrapped"
+                                and self.valves.THOUGHT_WRAPPED_INSTRUCTION
+                                and not __task__
+                            ):
+                                text += self._get_thought_wrapped_instruction()
+                            content = list(content)
+                            content[last_text_idx] = {**content[last_text_idx], "text": text}
                     messages[i] = {**messages[i], "content": content}
                 break
 
