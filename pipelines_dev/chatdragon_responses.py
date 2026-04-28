@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field, field_validator
 
 import httpx
 
+# Hidden marker prefix sent by AskUserQuestionCard.svelte. Must stay byte-for-
+# byte in sync with ``ANSWER_MARKER`` in that component. The leading char is
+# U+200B (zero-width space) so any accidental display is invisible.
+_ASK_USER_QUESTION_ANSWER_MARKER = "​::AUQ_ANSWER::"
+
 # Regex to detect SDK tool-execution noise that leaks into text deltas:
 #   - Bare tool names like "mcp__mcp_router__cql", "Read", "Bash"
 #   - "Executing tool_name..." status lines
@@ -135,6 +140,13 @@ class Pipeline:
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
+        # Track pending AskUserQuestion function_calls per chat. When the
+        # gateway returns response.completed with status="requires_action",
+        # the user's next message must be routed back as function_call_output
+        # (matched by call_id) instead of a regular input. Without this, the
+        # SDK 0.1.57+ permission prompts (e.g. MEMORY.md sensitive write) get
+        # surfaced but the turn never closes.
+        self._pending_function_calls: dict[str, dict] = {}
 
     def pipes(self) -> list:
         return [
@@ -676,24 +688,65 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     last_user_content = "\n".join(parts)
                 break
 
-        payload = {
-            "model": self.valves.MODEL,
-            "input": last_user_content,
-            "stream": use_stream,
-        }
+        # AskUserQuestionCard prefixes its replies with a hidden marker so the
+        # frontend can collapse the user-message bubble and the wrapper sees
+        # only the actual answer. Strip both the leading marker and any
+        # accidental whitespace; keep raw input intact otherwise.
+        if isinstance(last_user_content, str) and last_user_content.startswith(
+            _ASK_USER_QUESTION_ANSWER_MARKER
+        ):
+            last_user_content = last_user_content[
+                len(_ASK_USER_QUESTION_ANSWER_MARKER):
+            ].lstrip()
 
-        # Multi-turn: use previous_response_id for continuity
+        # If the previous turn ended in requires_action (AskUserQuestion or
+        # SDK permission prompt), the wrapper expects a function_call_output
+        # matched by call_id — not a fresh user message. Routing as a normal
+        # input here would either error or leave the function call dangling.
+        pending_fc = (
+            self._pending_function_calls.pop(chat_id, None) if chat_id else None
+        )
         prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
-        if prev_resp_id:
-            payload["previous_response_id"] = prev_resp_id
-        else:
-            # First turn: include system instructions if any
-            system_msg = next(
-                (m.get("content", "") for m in messages if m.get("role") == "system"),
-                None,
+
+        if pending_fc:
+            payload = {
+                "model": self.valves.MODEL,
+                "input": [
+                    {
+                        "type": "function_call_output",
+                        "call_id": pending_fc.get("call_id", ""),
+                        "output": last_user_content if isinstance(last_user_content, str)
+                        else json.dumps(last_user_content, ensure_ascii=False),
+                    }
+                ],
+                "stream": use_stream,
+            }
+            if prev_resp_id:
+                payload["previous_response_id"] = prev_resp_id
+            log.info(
+                "[PIPE] resuming function_call name=%s call_id=%s for chat=%s",
+                pending_fc.get("name", ""),
+                pending_fc.get("call_id", ""),
+                chat_id,
             )
-            if system_msg:
-                payload["instructions"] = system_msg
+        else:
+            payload = {
+                "model": self.valves.MODEL,
+                "input": last_user_content,
+                "stream": use_stream,
+            }
+
+            # Multi-turn: use previous_response_id for continuity
+            if prev_resp_id:
+                payload["previous_response_id"] = prev_resp_id
+            else:
+                # First turn: include system instructions if any
+                system_msg = next(
+                    (m.get("content", "") for m in messages if m.get("role") == "system"),
+                    None,
+                )
+                if system_msg:
+                    payload["instructions"] = system_msg
 
         # User identity for workspace isolation
         if owui_username:
@@ -781,6 +834,43 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             if resp_id and chat_id:
                                 self._response_ids[chat_id] = resp_id
                                 log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
+
+                            # Detect AskUserQuestion (requires_action). The
+                            # gateway/SDK surfaces permission prompts and
+                            # explicit AskUserQuestion calls as a function_call
+                            # output item with status="requires_action". The
+                            # user's next message is routed as function_call_output
+                            # in pipe() so the wrapper turn can close.
+                            if resp_obj.get("status") == "requires_action":
+                                fc_item = None
+                                for item in resp_obj.get("output", []):
+                                    if (
+                                        isinstance(item, dict)
+                                        and item.get("type") == "function_call"
+                                    ):
+                                        fc_item = item
+                                        break
+                                if fc_item and chat_id:
+                                    self._pending_function_calls[chat_id] = {
+                                        "call_id": fc_item.get("call_id", ""),
+                                        "name": fc_item.get("name", ""),
+                                        "arguments": fc_item.get("arguments", "{}"),
+                                    }
+                                    log.info(
+                                        "[PIPE] pending function_call name=%s call_id=%s for chat=%s",
+                                        fc_item.get("name", ""),
+                                        fc_item.get("call_id", ""),
+                                        chat_id,
+                                    )
+                                    rendered = self._render_ask_user_question(fc_item)
+                                    if rendered:
+                                        if thought_wrapped and not response_tag_sent:
+                                            if text_buffer:
+                                                yield text_buffer
+                                                text_buffer = ""
+                                            yield "\n</thought>\n\n"
+                                            response_tag_sent = True
+                                        yield rendered
                             continue
 
                         if event_type == "response.failed":
@@ -1046,6 +1136,98 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     current=match["current"],
                     base_url=match["base_url"],
                 )
+
+    def _render_ask_user_question(self, fc_item: dict) -> str:
+        """Render an AskUserQuestion function_call for Open WebUI.
+
+        Emits a ``<details type="ask_user_question">`` block. The Svelte
+        token dispatcher (``MarkdownTokens.svelte``) intercepts this and
+        renders an interactive ``AskUserQuestionCard`` with clickable
+        options. Falls back to readable markdown if the body fails to
+        parse on the frontend.
+
+        The body JSON shape mirrors a2a-agent's ``pendingQuestion``::
+
+          {"callId": "...",
+           "name": "AskUserQuestion",
+           "questions": [{"question": "...",
+                          "options": [{"label": "...", "description": "..."}],
+                          "multiSelect": false}]}
+        """
+        name = fc_item.get("name", "AskUserQuestion")
+        call_id = fc_item.get("call_id", "")
+        try:
+            args = json.loads(fc_item.get("arguments", "{}") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+
+        questions_list = args.get("questions")
+        if isinstance(questions_list, list) and questions_list:
+            raw_items = questions_list
+        else:
+            raw_items = [args]
+
+        normalized: list[dict] = []
+        for q in raw_items:
+            if not isinstance(q, dict):
+                continue
+            question_text = q.get("question") or q.get("prompt") or ""
+            options_raw = q.get("options")
+            options: list[dict] = []
+            if isinstance(options_raw, list):
+                for opt in options_raw:
+                    if isinstance(opt, dict):
+                        label = opt.get("label", "")
+                        desc = opt.get("description", "")
+                    else:
+                        label = str(opt)
+                        desc = ""
+                    if label:
+                        options.append({"label": label, "description": desc})
+            normalized.append({
+                "question": question_text,
+                "options": options,
+                "multiSelect": bool(q.get("multiSelect")),
+            })
+
+        # Drop completely empty entries (no question text and no options) —
+        # except when they are the only item (permission prompts may carry
+        # the payload under unknown keys; we surface the raw args then).
+        if any(q.get("question") or q.get("options") for q in normalized):
+            normalized = [
+                q for q in normalized
+                if q.get("question") or q.get("options")
+            ]
+
+        body = {
+            "callId": call_id,
+            "name": name,
+            "questions": normalized,
+            "raw": args if not normalized or not any(
+                q.get("question") for q in normalized
+            ) else None,
+        }
+        # Drop None values for a clean payload
+        body = {k: v for k, v in body.items() if v is not None}
+
+        body_json = json.dumps(body, ensure_ascii=False)
+
+        if name == "AskUserQuestion":
+            summary = "❓ 추가 입력이 필요합니다"
+        else:
+            summary = f"❓ 권한/입력 요청: {name}"
+
+        # Wrap in <details> so Open WebUI's MarkdownTokens.svelte can
+        # dispatch on attributes.type. The body is JSON; the Svelte side
+        # strips <summary> and JSON.parse()s the rest. ``done="true"`` keeps
+        # the card interactive once the message stream finishes.
+        return (
+            "\n\n"
+            f'<details type="ask_user_question" done="true">\n'
+            f"<summary>{summary}</summary>\n"
+            f"{body_json}\n"
+            "</details>\n\n"
+        )
 
     def _render_system_event(
         self,

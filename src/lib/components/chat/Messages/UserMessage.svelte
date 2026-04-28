@@ -366,6 +366,28 @@
 					</div>
 				</div>
 			{:else if message.content !== ''}
+				{@const ASK_USER_ANSWER_MARKER = '​::AUQ_ANSWER::'}
+				{@const isAskUserAnswer =
+					typeof message.content === 'string' &&
+					message.content.startsWith(ASK_USER_ANSWER_MARKER)}
+				{@const askUserAnswerText = isAskUserAnswer
+					? message.content.slice(ASK_USER_ANSWER_MARKER.length).trim()
+					: ''}
+				{#if isAskUserAnswer}
+					<!-- AskUserQuestionCard reply: render compact "↳ answer" chip -->
+					<div class="w-full">
+						<div class="flex justify-end pb-1">
+							<div
+								class="text-xs text-gray-400 dark:text-gray-500 italic px-3 py-0.5"
+								title={askUserAnswerText}
+							>
+								↳ {askUserAnswerText.length > 60
+									? askUserAnswerText.slice(0, 60) + '…'
+									: askUserAnswerText}
+							</div>
+						</div>
+					</div>
+				{:else}
 				<div class="w-full">
 					<div class="flex {($settings?.chatBubble ?? true) ? 'justify-end pb-1' : 'w-full'}">
 						<div
@@ -386,6 +408,7 @@
 						</div>
 					</div>
 				</div>
+				{/if}
 			{/if}
 
 			{#if edit !== true}

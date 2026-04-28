@@ -219,13 +219,81 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
     # Extract database path from SQLCipher URL
     db_path = SQLALCHEMY_DATABASE_URL.replace('sqlite+sqlcipher://', '')
 
+    # SQLAlchemy's async result handler (``_ensure_sync_result`` in
+    # ``sqlalchemy.ext.asyncio.result``) calls
+    # ``await cursor._async_soft_close()`` to release cursors inside the
+    # asyncio event loop after execute().  aiosqlite provides this on its
+    # async cursor wrapper, but sqlcipher3 ships only the sync DBAPI cursor
+    # — and that cursor is a C extension type, so attributes can't be
+    # monkey-patched directly (``TypeError: cannot set '_async_soft_close'
+    # attribute of immutable type 'sqlcipher3.dbapi2.Cursor'``).
+    #
+    # Instead, wrap both the connection and its cursors with thin Python
+    # proxies that forward every other attribute via ``__getattr__`` and
+    # add the missing ``_async_soft_close`` coroutine.  Without this any
+    # async query that hits ``_ensure_sync_result`` (notably ``.scalar()``
+    # on ``select(exists())``, ``select(func.count())``, …) raises
+    # AttributeError, which the surrounding try/except in models silently
+    # swallows — yielding bizarre symptoms (e.g. ``is_chat_owner`` always
+    # returning False so non-admin users hit a 404 "Something went wrong :/"
+    # on the second turn of any chat).
+    class _SQLCipherCursorWrapper:
+        __slots__ = ('_cursor',)
+
+        def __init__(self, cursor):
+            object.__setattr__(self, '_cursor', cursor)
+
+        async def _async_soft_close(self):
+            try:
+                self._cursor.close()
+            except Exception:
+                pass
+
+        def __getattr__(self, name):
+            return getattr(self._cursor, name)
+
+        def __setattr__(self, name, value):
+            setattr(self._cursor, name, value)
+
+        def __iter__(self):
+            return iter(self._cursor)
+
+        def __enter__(self):
+            self._cursor.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return self._cursor.__exit__(exc_type, exc, tb)
+
+    class _SQLCipherConnectionWrapper:
+        __slots__ = ('_conn',)
+
+        def __init__(self, conn):
+            object.__setattr__(self, '_conn', conn)
+
+        def cursor(self, *args, **kwargs):
+            return _SQLCipherCursorWrapper(self._conn.cursor(*args, **kwargs))
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+        def __setattr__(self, name, value):
+            setattr(self._conn, name, value)
+
+        def __enter__(self):
+            self._conn.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return self._conn.__exit__(exc_type, exc, tb)
+
     # Create a custom creator function that uses sqlcipher3
     def create_sqlcipher_connection():
         import sqlcipher3
 
         conn = sqlcipher3.connect(db_path, check_same_thread=False)
         conn.execute(f"PRAGMA key = '{database_password}'")
-        return conn
+        return _SQLCipherConnectionWrapper(conn)
 
     # The dummy "sqlite://" URL would cause SQLAlchemy to auto-select
     # SingletonThreadPool, which non-deterministically closes in-use
