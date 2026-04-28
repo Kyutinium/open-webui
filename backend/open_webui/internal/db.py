@@ -31,7 +31,7 @@ from sqlalchemy import Dialect, create_engine, MetaData, event, types
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import scoped_session, sessionmaker, Session
-from sqlalchemy.pool import QueuePool, NullPool
+from sqlalchemy.pool import QueuePool, NullPool, AsyncAdaptedQueuePool
 from sqlalchemy.sql.type_api import _T
 from typing_extensions import Self
 
@@ -443,10 +443,16 @@ if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
             # derivation only fires once per pooled connection.  Mirrors
             # the sync-engine pool sizing so behaviour is consistent.
             #
-            # ``poolclass=QueuePool`` is mandatory here: with a custom
-            # ``creator`` SQLAlchemy otherwise auto-selects ``StaticPool``
-            # for SQLite (which doesn't accept pool_size / max_overflow
-            # / pool_timeout and would raise TypeError on engine init).
+            # ``poolclass=AsyncAdaptedQueuePool`` is mandatory here:
+            #   * the regular ``QueuePool`` raises
+            #     ``Pool class QueuePool cannot be used with asyncio engine``
+            #     because it doesn't expose the async checkout/return hooks
+            #     ``create_async_engine`` requires.
+            #   * leaving it unset makes SQLAlchemy auto-pick ``StaticPool``
+            #     for SQLite + ``creator``, which doesn't accept the sizing
+            #     kwargs.
+            # ``AsyncAdaptedQueuePool`` is the async-side equivalent of
+            # QueuePool and accepts the same sizing parameters.
             _sqlcipher_async_pool_size = (
                 DATABASE_POOL_SIZE
                 if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0
@@ -455,7 +461,7 @@ if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
             async_engine = create_async_engine(
                 ASYNC_SQLALCHEMY_DATABASE_URL,
                 creator=create_sqlcipher_connection,
-                poolclass=QueuePool,
+                poolclass=AsyncAdaptedQueuePool,
                 pool_size=_sqlcipher_async_pool_size,
                 max_overflow=DATABASE_POOL_MAX_OVERFLOW,
                 pool_timeout=DATABASE_POOL_TIMEOUT,
