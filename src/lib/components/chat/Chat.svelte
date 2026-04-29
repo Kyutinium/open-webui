@@ -712,6 +712,18 @@
 				}
 			}
 		}
+
+		// AskUserQuestion card answer — bypasses the chat-completion channel
+		// and goes directly to the gateway via /api/v1/auq/answer.
+		if (type === 'auq:answer:submit') {
+			if (!isSameOrigin) return;
+			const callId = (event.data as any)?.callId;
+			const answer = (event.data as any)?.answer;
+			const previousResponseId = (event.data as any)?.previousResponseId;
+			if (!callId || answer == null) return;
+			await tick();
+			submitAUQAnswer({ callId, answer, previousResponseId });
+		}
 	};
 
 	const savedModelIds = async () => {
@@ -1901,6 +1913,249 @@
 	//////////////////////////
 	// Chat functions
 	//////////////////////////
+
+	// Submit an AskUserQuestion card answer through the dedicated relay.
+	// Creates a new assistant message under the card's parent and streams the
+	// gateway's continuation Responses-API SSE into it.  Skips the chat
+	// completion channel so concurrent task requests (title gen, follow-ups)
+	// can't race for the gateway's pending function_call slot.
+	const submitAUQAnswer = async ({
+		callId,
+		answer,
+		previousResponseId
+	}: {
+		callId: string;
+		answer: string;
+		previousResponseId?: string;
+	}) => {
+		const _chatId = $chatId;
+		if (!_chatId) {
+			toast.error('No active chat for AskUserQuestion answer');
+			return;
+		}
+
+		const parentId = history.currentId;
+		const parentMessage = parentId ? history.messages[parentId] : null;
+		const modelId = parentMessage?.model ?? selectedModels[0] ?? '';
+		const model = $models.find((m) => m.id === modelId);
+
+		const responseMessageId = uuidv4();
+		const responseMessage: any = {
+			parentId: parentId,
+			id: responseMessageId,
+			childrenIds: [] as string[],
+			role: 'assistant',
+			content: '',
+			done: false,
+			model: modelId,
+			modelName: model?.name ?? modelId,
+			modelIdx: (parentMessage as any)?.modelIdx ?? 0,
+			timestamp: Math.floor(Date.now() / 1000)
+		};
+
+		history.messages[responseMessageId] = responseMessage;
+		if (parentId !== null && history.messages[parentId]) {
+			history.messages[parentId].childrenIds = [
+				...history.messages[parentId].childrenIds,
+				responseMessageId
+			];
+		}
+		history.currentId = responseMessageId;
+		history = history;
+		await tick();
+
+		const url = `${WEBUI_API_BASE_URL}/auq/answer`;
+		let resp: Response;
+		try {
+			resp = await fetch(url, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${localStorage.token}`
+				},
+				body: JSON.stringify({
+					chat_id: _chatId,
+					call_id: callId,
+					answer,
+					previous_response_id: previousResponseId || undefined
+				})
+			});
+		} catch (e: any) {
+			responseMessage.error = { content: `AUQ relay failed: ${e?.message ?? e}` };
+			responseMessage.done = true;
+			history.messages[responseMessageId] = responseMessage;
+			history = history;
+			return;
+		}
+
+		if (!resp.ok || !resp.body) {
+			const text = await resp.text().catch(() => '');
+			responseMessage.error = {
+				content: `AUQ relay HTTP ${resp.status}: ${text.slice(0, 500)}`
+			};
+			responseMessage.done = true;
+			history.messages[responseMessageId] = responseMessage;
+			history = history;
+			return;
+		}
+
+		// Parse the gateway's Responses API SSE stream and project the
+		// minimum subset we need into the message:
+		//   * response.output_text.delta   → append delta text
+		//   * response.completed (requires_action) → render follow-up card
+		//   * response.completed (final)   → mark done + save chat
+		//   * response.failed              → surface error
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = '';
+		let currentEventType = '';
+		let finished = false;
+
+		const handleEvent = (eventType: string, payload: any) => {
+			if (eventType === 'response.output_text.delta') {
+				const delta = typeof payload?.delta === 'string' ? payload.delta : '';
+				if (delta) {
+					responseMessage.content += delta;
+					history.messages[responseMessageId] = responseMessage;
+					history = history;
+				}
+			} else if (eventType === 'response.completed') {
+				const respObj = payload?.response ?? {};
+				if (respObj.status === 'requires_action') {
+					// Another AskUserQuestion / permission prompt — render a
+					// new card so the user can answer.  Mirrors the pipe's
+					// _render_ask_user_question shape so MarkdownTokens.svelte
+					// dispatches it to AskUserQuestionCard.
+					const fc = (respObj.output ?? []).find(
+						(item: any) => item?.type === 'function_call'
+					);
+					if (fc) {
+						let args: any = {};
+						try {
+							args = JSON.parse(fc.arguments ?? '{}') ?? {};
+						} catch {
+							args = {};
+						}
+						const rawList = Array.isArray(args.questions) ? args.questions : [args];
+						const questions = rawList
+							.filter((q: any) => q && typeof q === 'object')
+							.map((q: any) => ({
+								question: q.question ?? q.prompt ?? '',
+								options: Array.isArray(q.options)
+									? q.options
+											.map((opt: any) =>
+												typeof opt === 'string'
+													? { label: opt, description: '' }
+													: { label: opt?.label ?? '', description: opt?.description ?? '' }
+											)
+											.filter((opt: any) => opt.label)
+									: [],
+								multiSelect: !!q.multiSelect
+							}));
+						const body = {
+							callId: fc.call_id ?? '',
+							name: fc.name ?? 'AskUserQuestion',
+							previousResponseId: respObj.id ?? undefined,
+							questions,
+							raw: questions.some((q: any) => q.question) ? undefined : args
+						};
+						const summary =
+							fc.name === 'AskUserQuestion'
+								? '❓ 추가 입력이 필요합니다'
+								: `❓ 권한/입력 요청: ${fc.name ?? ''}`;
+						responseMessage.content +=
+							`\n\n<details type="ask_user_question" done="true">\n` +
+							`<summary>${summary}</summary>\n` +
+							`${JSON.stringify(body)}\n` +
+							`</details>\n\n`;
+						history.messages[responseMessageId] = responseMessage;
+						history = history;
+					}
+					// requires_action keeps the assistant message "live" so the
+					// new card is interactive; mark done so save can proceed.
+				}
+				responseMessage.done = true;
+				history.messages[responseMessageId] = responseMessage;
+				history = history;
+				finished = true;
+			} else if (eventType === 'response.failed') {
+				const err = payload?.error ?? payload?.response?.error ?? {};
+				responseMessage.error = {
+					content: err?.message ?? 'AUQ continuation failed'
+				};
+				responseMessage.done = true;
+				history.messages[responseMessageId] = responseMessage;
+				history = history;
+				finished = true;
+			}
+		};
+
+		const flushBlock = (block: string) => {
+			let eventType = currentEventType;
+			let dataLines: string[] = [];
+			for (const line of block.split('\n')) {
+				if (!line || line.startsWith(':')) continue;
+				if (line.startsWith('event:')) {
+					eventType = line.slice(6).trim();
+				} else if (line.startsWith('data:')) {
+					dataLines.push(line.slice(5).trim());
+				}
+			}
+			if (!dataLines.length) return;
+			const dataStr = dataLines.join('\n');
+			let payload: any = null;
+			try {
+				payload = JSON.parse(dataStr);
+			} catch {
+				return;
+			}
+			if (!eventType && typeof payload?.type === 'string') {
+				eventType = payload.type;
+			}
+			handleEvent(eventType, payload);
+		};
+
+		try {
+			while (!finished) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buffer += decoder.decode(value, { stream: true });
+				let idx;
+				while ((idx = buffer.indexOf('\n\n')) !== -1) {
+					const block = buffer.slice(0, idx);
+					buffer = buffer.slice(idx + 2);
+					flushBlock(block);
+				}
+			}
+			if (buffer.trim()) {
+				flushBlock(buffer);
+			}
+		} catch (e: any) {
+			responseMessage.error = { content: `AUQ stream read failed: ${e?.message ?? e}` };
+			responseMessage.done = true;
+			history.messages[responseMessageId] = responseMessage;
+			history = history;
+		}
+
+		if (!responseMessage.done) {
+			responseMessage.done = true;
+			history.messages[responseMessageId] = responseMessage;
+			history = history;
+		}
+
+		await tick();
+		if (autoScroll) {
+			scrollToBottom();
+		}
+
+		// Persist to backend so refresh keeps the continuation visible.
+		chatCompletedHandler(
+			_chatId,
+			modelId,
+			responseMessageId,
+			createMessagesList(history, responseMessageId)
+		);
+	};
 
 	const submitPrompt = async (inputContent, inputFiles) => {
 		const _files = structuredClone(inputFiles);

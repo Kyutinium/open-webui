@@ -27,11 +27,6 @@ from pydantic import BaseModel, Field, field_validator
 
 import httpx
 
-# Hidden marker prefix sent by AskUserQuestionCard.svelte. Must stay byte-for-
-# byte in sync with ``ANSWER_MARKER`` in that component. The leading char is
-# U+200B (zero-width space) so any accidental display is invisible.
-_ASK_USER_QUESTION_ANSWER_MARKER = "​::AUQ_ANSWER::"
-
 # Regex for parsing the gateway's 409 "Stale previous_response_id" body.  The
 # wrapper helpfully includes the latest valid response_id so we can recover
 # without forcing a fresh session.  Example body::
@@ -148,13 +143,12 @@ class Pipeline:
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
-        # Track pending AskUserQuestion function_calls per chat. When the
-        # gateway returns response.completed with status="requires_action",
-        # the user's next message must be routed back as function_call_output
-        # (matched by call_id) instead of a regular input. Without this, the
-        # SDK 0.1.57+ permission prompts (e.g. MEMORY.md sensitive write) get
-        # surfaced but the turn never closes.
-        self._pending_function_calls: dict[str, dict] = {}
+        # AskUserQuestion replies (sensitive-file permission cards, multi-turn
+        # questions) bypass this pipe entirely.  The Svelte card POSTs the
+        # user's choice to ``/api/v1/auq/answer`` which relays it straight to
+        # the gateway as ``function_call_output``.  We don't carry per-chat
+        # pending state here anymore — that dict was per-process and broke
+        # under multi-worker uvicorn.
 
     def pipes(self) -> list:
         return [
@@ -755,74 +749,37 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     last_user_content = "\n".join(parts)
                 break
 
-        # AskUserQuestionCard prefixes its replies with a hidden marker so the
-        # frontend can collapse the user-message bubble and the wrapper sees
-        # only the actual answer. Strip both the leading marker and any
-        # accidental whitespace; keep raw input intact otherwise.
-        if isinstance(last_user_content, str) and last_user_content.startswith(
-            _ASK_USER_QUESTION_ANSWER_MARKER
-        ):
-            last_user_content = last_user_content[
-                len(_ASK_USER_QUESTION_ANSWER_MARKER):
-            ].lstrip()
-
-        # If the previous turn ended in requires_action (AskUserQuestion or
-        # SDK permission prompt), the wrapper expects a function_call_output
-        # matched by call_id — not a fresh user message. Routing as a normal
-        # input here would either error or leave the function call dangling.
-        pending_fc = (
-            self._pending_function_calls.pop(chat_id, None) if chat_id else None
-        )
+        # AskUserQuestion replies don't reach this pipe — they go straight
+        # to the gateway through ``/api/v1/auq/answer``.  Anything routed
+        # through chat-completion is treated as a fresh user input.
         prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
 
-        if pending_fc:
-            payload = {
-                "model": self.valves.MODEL,
-                "input": [
-                    {
-                        "type": "function_call_output",
-                        "call_id": pending_fc.get("call_id", ""),
-                        "output": last_user_content if isinstance(last_user_content, str)
-                        else json.dumps(last_user_content, ensure_ascii=False),
-                    }
-                ],
-                "stream": use_stream,
-            }
-            if prev_resp_id:
-                payload["previous_response_id"] = prev_resp_id
-            log.info(
-                "[PIPE] resuming function_call name=%s call_id=%s for chat=%s",
-                pending_fc.get("name", ""),
-                pending_fc.get("call_id", ""),
-                chat_id,
-            )
-        else:
-            payload = {
-                "model": self.valves.MODEL,
-                "input": last_user_content,
-                "stream": use_stream,
-            }
+        payload = {
+            "model": self.valves.MODEL,
+            "input": last_user_content,
+            "stream": use_stream,
+        }
 
-            # Multi-turn: chain ``previous_response_id`` for normal chat
-            # turns only.  Task requests (title generation, follow-up
-            # suggestions, …) get sent as standalone calls — chaining
-            # them would (a) advance the wrapper's response counter and
-            # leave the chat's stored ``response_id`` stale, producing a
-            # 409 ``Stale previous_response_id`` on the next user turn,
-            # and (b) pollute the chat's conversation history with the
-            # task's prompt and reply.  Open WebUI already embeds the
-            # full chat content into the task prompt, so dropping the
-            # chain costs nothing.
-            if prev_resp_id and not __task__:
-                payload["previous_response_id"] = prev_resp_id
-            elif not __task__:
-                # First turn: include system instructions if any
-                system_msg = next(
-                    (m.get("content", "") for m in messages if m.get("role") == "system"),
-                    None,
-                )
-                if system_msg:
-                    payload["instructions"] = system_msg
+        # Multi-turn: chain ``previous_response_id`` for normal chat
+        # turns only.  Task requests (title generation, follow-up
+        # suggestions, …) get sent as standalone calls — chaining
+        # them would (a) advance the wrapper's response counter and
+        # leave the chat's stored ``response_id`` stale, producing a
+        # 409 ``Stale previous_response_id`` on the next user turn,
+        # and (b) pollute the chat's conversation history with the
+        # task's prompt and reply.  Open WebUI already embeds the
+        # full chat content into the task prompt, so dropping the
+        # chain costs nothing.
+        if prev_resp_id and not __task__:
+            payload["previous_response_id"] = prev_resp_id
+        elif not __task__:
+            # First turn: include system instructions if any
+            system_msg = next(
+                (m.get("content", "") for m in messages if m.get("role") == "system"),
+                None,
+            )
+            if system_msg:
+                payload["instructions"] = system_msg
 
         # User identity for workspace isolation
         if owui_username:
@@ -919,9 +876,11 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             # Detect AskUserQuestion (requires_action). The
                             # gateway/SDK surfaces permission prompts and
                             # explicit AskUserQuestion calls as a function_call
-                            # output item with status="requires_action". The
-                            # user's next message is routed as function_call_output
-                            # in pipe() so the wrapper turn can close.
+                            # output item with status="requires_action". We
+                            # render the card but no longer track per-chat
+                            # pending state here — the user's reply goes
+                            # straight to the gateway via
+                            # ``/api/v1/auq/answer``.
                             if resp_obj.get("status") == "requires_action":
                                 fc_item = None
                                 for item in resp_obj.get("output", []):
@@ -931,23 +890,18 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                     ):
                                         fc_item = item
                                         break
-                                if fc_item and chat_id:
-                                    self._pending_function_calls[chat_id] = {
-                                        "call_id": fc_item.get("call_id", ""),
-                                        "name": fc_item.get("name", ""),
-                                        "arguments": fc_item.get("arguments", "{}"),
-                                    }
+                                if fc_item:
                                     log.info(
-                                        "[PIPE] pending function_call name=%s call_id=%s for chat=%s",
+                                        "[PIPE] requires_action name=%s call_id=%s for chat=%s",
                                         fc_item.get("name", ""),
                                         fc_item.get("call_id", ""),
                                         chat_id,
                                     )
                                     # ``resp_id`` is the response_id the
                                     # gateway just returned for this turn —
-                                    # the frontend card must echo it back
-                                    # via ``/api/v1/auq/answer`` so the
-                                    # gateway can locate the paused session.
+                                    # the frontend card echoes it back to
+                                    # ``/api/v1/auq/answer`` so the gateway
+                                    # can locate the paused session.
                                     rendered = self._render_ask_user_question(
                                         fc_item,
                                         previous_response_id=resp_id or None,
