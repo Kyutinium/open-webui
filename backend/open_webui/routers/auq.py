@@ -38,9 +38,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from open_webui.env import (
-    CLAUDE_CODE_GATEWAY_API_KEY,
-    CLAUDE_CODE_GATEWAY_BASE_URL,
-    CLAUDE_CODE_GATEWAY_TIMEOUT,
+    GATEWAY_API_KEY,
+    GATEWAY_BASE_URL,
+    GATEWAY_TIMEOUT,
 )
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.models.chats import Chats
@@ -84,8 +84,8 @@ def _build_gateway_headers(request: Request) -> dict:
     """Replicate the pipe's auth header construction so the gateway sees
     the same credentials regardless of which layer originated the call."""
     headers: dict[str, str] = {}
-    if CLAUDE_CODE_GATEWAY_API_KEY:
-        headers['Authorization'] = f'Bearer {CLAUDE_CODE_GATEWAY_API_KEY}'
+    if GATEWAY_API_KEY:
+        headers['Authorization'] = f'Bearer {GATEWAY_API_KEY}'
 
     # Forward dscrowd cookie + Open WebUI username for MCP auth — same
     # contract as ``chatdragon_responses.pipe()``.
@@ -152,7 +152,7 @@ async def auq_answer(
     if user and user.name:
         payload['user'] = user.name
 
-    url = f'{CLAUDE_CODE_GATEWAY_BASE_URL}/v1/responses'
+    url = f'{GATEWAY_BASE_URL}/v1/responses'
     headers = _build_gateway_headers(request)
 
     log.info(
@@ -166,7 +166,7 @@ async def auq_answer(
     async def _stream():
         timeout = httpx.Timeout(
             connect=30.0,
-            read=float(CLAUDE_CODE_GATEWAY_TIMEOUT),
+            read=float(GATEWAY_TIMEOUT),
             write=30.0,
             pool=30.0,
         )

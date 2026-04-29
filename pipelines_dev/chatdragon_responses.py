@@ -943,7 +943,15 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                         fc_item.get("call_id", ""),
                                         chat_id,
                                     )
-                                    rendered = self._render_ask_user_question(fc_item)
+                                    # ``resp_id`` is the response_id the
+                                    # gateway just returned for this turn —
+                                    # the frontend card must echo it back
+                                    # via ``/api/v1/auq/answer`` so the
+                                    # gateway can locate the paused session.
+                                    rendered = self._render_ask_user_question(
+                                        fc_item,
+                                        previous_response_id=resp_id or None,
+                                    )
                                     if rendered:
                                         if thought_wrapped and not response_tag_sent:
                                             if text_buffer:
@@ -1259,7 +1267,11 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     base_url=match["base_url"],
                 )
 
-    def _render_ask_user_question(self, fc_item: dict) -> str:
+    def _render_ask_user_question(
+        self,
+        fc_item: dict,
+        previous_response_id: Optional[str] = None,
+    ) -> str:
         """Render an AskUserQuestion function_call for Open WebUI.
 
         Emits a ``<details type="ask_user_question">`` block. The Svelte
@@ -1268,10 +1280,14 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         options. Falls back to readable markdown if the body fails to
         parse on the frontend.
 
-        The body JSON shape mirrors a2a-agent's ``pendingQuestion``::
+        The body JSON shape mirrors a2a-agent's ``pendingQuestion`` and
+        adds ``previousResponseId`` so the card can submit the user's
+        answer to the dedicated ``/api/v1/auq/answer`` backend relay
+        without going through the chat-completion channel::
 
           {"callId": "...",
            "name": "AskUserQuestion",
+           "previousResponseId": "resp_<uuid>_<turn>",
            "questions": [{"question": "...",
                           "options": [{"label": "...", "description": "..."}],
                           "multiSelect": false}]}
@@ -1324,6 +1340,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         body = {
             "callId": call_id,
             "name": name,
+            "previousResponseId": previous_response_id,
             "questions": normalized,
             "raw": args if not normalized or not any(
                 q.get("question") for q in normalized

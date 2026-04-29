@@ -78,6 +78,7 @@ from open_webui.socket.main import (
 from open_webui.routers import (
     analytics,
     audio,
+    auq,
     images,
     image_proxy,
     mcp_tools,
@@ -1441,6 +1442,7 @@ app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])
 app.include_router(chats.router, prefix='/api/v1/chats', tags=['chats'])
+app.include_router(auq.router, prefix='/api/v1/auq', tags=['auq'])
 app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
 
 

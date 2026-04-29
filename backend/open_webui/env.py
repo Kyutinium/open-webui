@@ -423,27 +423,27 @@ DATABASE_SQLCIPHER_USE_POOL = os.environ.get('DATABASE_SQLCIPHER_USE_POOL', 'Fal
 # ----------------------------------------------------------------------------
 # AskUserQuestion answer relay
 # ----------------------------------------------------------------------------
-# Base URL of the claude-code-gateway used by the chatdragon Responses pipe
-# AND by the backend ``/api/v1/auq/answer`` endpoint.  The endpoint relays
-# the user's card click to the gateway as a ``function_call_output`` so the
-# answer never travels through the user-message channel — bypassing
-# context-injection, title-task races, and other side-effects that broke
-# the marker-based piggy-back design.
+# Base URL of the claude-code-gateway.  Read by the backend
+# ``/api/v1/auq/answer`` endpoint to relay the user's card click directly
+# to the gateway as a ``function_call_output``, bypassing the chat
+# completion path entirely (no title-task race, no context injection).
 #
-# Default points at the in-cluster gateway service used in dev compose.
-# Override per deployment.
-CLAUDE_CODE_GATEWAY_BASE_URL = os.environ.get(
-    'CLAUDE_CODE_GATEWAY_BASE_URL',
+# This intentionally duplicates the pipe's ``BASE_URL`` valve in the
+# pipelines container — operators set the same value in both places via
+# docker-compose env.  Keeping the names different from the pipe valve
+# (``BASE_URL``) avoids accidental shadowing inside the pipe.
+GATEWAY_BASE_URL = os.environ.get(
+    'GATEWAY_BASE_URL',
     'http://host.docker.internal:17995',
 ).rstrip('/')
 
 # Optional API key forwarded as ``Authorization: Bearer …`` to the gateway,
 # matching the pipe's ``API_KEY`` valve.  Empty disables the header.
-CLAUDE_CODE_GATEWAY_API_KEY = os.environ.get('CLAUDE_CODE_GATEWAY_API_KEY', '').strip()
+GATEWAY_API_KEY = os.environ.get('GATEWAY_API_KEY', '').strip()
 
 # Total request timeout (seconds) for relayed answer streams.  Mirrors the
 # pipe's ``TIMEOUT`` valve default.
-CLAUDE_CODE_GATEWAY_TIMEOUT = int(os.environ.get('CLAUDE_CODE_GATEWAY_TIMEOUT', '600'))
+GATEWAY_TIMEOUT = int(os.environ.get('GATEWAY_TIMEOUT', '600'))
 
 DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL = os.environ.get('DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL', None)
 if DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL is not None:
