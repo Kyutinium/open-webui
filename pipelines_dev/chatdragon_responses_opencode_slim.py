@@ -531,15 +531,16 @@ class Pipeline:
         literal ``<think>``, ``<p>``, ``<details>``, etc. is not reparsed
         as nested HTML by Open WebUI's markdown renderer (which would
         otherwise render an unrelated ``<think>`` collapsible inside the
-        Explored block).
+        Explored block).  ``<hr/>`` separators discourage the renderer
+        from grouping this panel with the surrounding tool_calls blocks.
         """
         body = json.dumps(tool_data, ensure_ascii=False)
         body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
-            f'\n\n<details type="tool_explorer" done="true">\n'
+            f'\n\n<hr/>\n\n<details type="tool_explorer" done="true">\n'
             f'<summary>Tool Results</summary>\n'
             f'{body}\n'
-            f'</details>\n\n'
+            f'</details>\n\n<hr/>\n\n'
         )
 
     # ------------------------------------------------------------------
@@ -1151,14 +1152,20 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
+                # ``<hr/>`` separators + a unique ``id`` per call defeat Open
+                # WebUI's "Explored N times" aggregation which would otherwise
+                # visually swallow neighbouring elements (View Result / Thought
+                # blocks) into the first tool_calls panel.  The unique id makes
+                # the grouping logic see each block as distinct.
                 details_tag = (
-                    f'\n\n<details type="tool_calls"'
+                    f'\n\n<hr/>\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
+                    f' id="tc-{tool_id}"'
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"</details>\n\n"
+                    f"</details>\n\n<hr/>\n\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
