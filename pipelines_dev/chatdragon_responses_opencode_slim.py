@@ -529,8 +529,8 @@ class Pipeline:
 
         The JSON body is HTML-escaped so search-result text containing
         literal ``<think>``, ``<p>``, ``<details>``, etc. is not reparsed
-        as nested HTML by Open WebUI's markdown renderer.  ``---`` markdown
-        separators around the panel break sibling-grouping with adjacent
+        as nested HTML by Open WebUI's markdown renderer.  Leading ``---``
+        markdown separator breaks sibling-grouping with adjacent
         tool_calls cards.
         """
         body = json.dumps(tool_data, ensure_ascii=False)
@@ -539,7 +539,7 @@ class Pipeline:
             f'\n\n---\n\n<details type="tool_explorer" done="true">\n'
             f'<summary>Tool Results</summary>\n'
             f'{body}\n'
-            f'</details>\n\n---\n\n'
+            f'</details>\n'
         )
 
     # ------------------------------------------------------------------
@@ -1012,23 +1012,43 @@ class Pipeline:
                         if not chunk:
                             continue
 
-                        # Strip stale model-emitted </think> tags that we
-                        # already pre-closed before tool blocks.  Without
-                        # this the stream would carry an unmatched </think>
-                        # that Open WebUI renders as literal text and that
-                        # would leave the open-vs-close count unbalanced.
-                        while pending_skip_close_think > 0 and "</think>" in chunk:
-                            chunk = chunk.replace("</think>", "", 1)
-                            pending_skip_close_think -= 1
+                        # Process <think>/</think> tags in order so we keep
+                        # at most one open <think> at a time.  LiteLLM
+                        # ``merge_reasoning_content_in_choices`` can emit
+                        # multiple <think> opens (one per reasoning batch
+                        # between tool calls) without matching closes; if
+                        # we let those through, Open WebUI keeps consuming
+                        # everything (tool blocks, plain narration, the
+                        # final answer) into one giant Thought collapsible.
+                        cleaned_parts = []
+                        cursor = 0
+                        for m in re.finditer(r'<think>|</think>', chunk):
+                            cleaned_parts.append(chunk[cursor:m.start()])
+                            tag = m.group(0)
+                            if tag == "<think>":
+                                if in_think_block:
+                                    # Redundant open while already in think
+                                    # — drop it.
+                                    pass
+                                else:
+                                    in_think_block = True
+                                    cleaned_parts.append(tag)
+                            else:  # </think>
+                                if pending_skip_close_think > 0:
+                                    pending_skip_close_think -= 1
+                                    # Strip — already force-closed earlier.
+                                elif in_think_block:
+                                    in_think_block = False
+                                    cleaned_parts.append(tag)
+                                else:
+                                    # Stray close with no matching open
+                                    # — drop it.
+                                    pass
+                            cursor = m.end()
+                        cleaned_parts.append(chunk[cursor:])
+                        chunk = "".join(cleaned_parts)
                         if not chunk:
                             continue
-
-                        # Track <think>/</think> state from this chunk so
-                        # the next tool block knows whether to force-close.
-                        if "<think>" in chunk:
-                            in_think_block = True
-                        if "</think>" in chunk:
-                            in_think_block = False
 
                         full_text_acc += chunk
                         yield chunk
@@ -1151,12 +1171,13 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
-                # Markdown ``---`` horizontal rule between tool blocks so Open
-                # WebUI's "Explored N times" grouping does not visually merge
-                # consecutive tool_calls cards (which previously swallowed
-                # neighbouring View Result / Thought panels).  Using markdown
-                # syntax instead of literal ``<hr/>`` because the latter is
-                # not in the renderer's HTML whitelist and surfaced as text.
+                # Markdown ``---`` horizontal rule BEFORE each tool block so
+                # Open WebUI's "Explored N times" grouping cannot visually
+                # merge consecutive cards.  Only the leading separator is
+                # emitted -- a trailing one would double up between adjacent
+                # blocks and inflate the spacing.  Using markdown syntax
+                # rather than literal ``<hr/>`` because the latter is not in
+                # the renderer's HTML whitelist and surfaced as text.
                 details_tag = (
                     f'\n\n---\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
@@ -1165,7 +1186,7 @@ class Pipeline:
                     f' result="{safe_result}"'
                     f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"</details>\n\n---\n\n"
+                    f"</details>\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
