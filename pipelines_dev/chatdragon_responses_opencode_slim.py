@@ -1151,12 +1151,16 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
-                # Unique ``id`` per call defeats Open WebUI's "Explored N times"
-                # aggregation which would otherwise visually swallow neighbouring
-                # elements (View Result / Thought blocks) into the first
-                # tool_calls panel.
+                # Use ``type="tool_call"`` (singular) so Open WebUI does **not**
+                # apply the ``tool_calls`` (plural) "Explored N times" grouping
+                # which visually swallowed neighbouring blocks (View Result,
+                # Thought, plain narration) into the first card.  This loses
+                # the bespoke "Explored" header UI but produces clean, fully
+                # separate cards per call -- the trade-off operators asked for.
+                # Args/result are still attached as attributes so any future
+                # custom renderer can pick them up.
                 details_tag = (
-                    f'\n\n<details type="tool_calls"'
+                    f'\n\n<details type="tool_call"'
                     f' name="{esc_name}"'
                     f' id="tc-{tool_id}"'
                     f' arguments="{safe_args}"'
