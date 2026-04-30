@@ -1166,22 +1166,21 @@ class Pipeline:
                 friendly = self._friendly_tool_notification(name, is_error)
                 details_tag = f"\n> {friendly}\n"
             else:
-                safe_args = _safe_attr(args)
-                safe_result = _safe_attr(result_content)
-                # Plain ``<details>`` without a ``type`` attribute — the
-                # ``type="tool_calls"`` specialised renderer (Explored UI) was
-                # both grouping consecutive cards and visually absorbing the
-                # post-block content (Thought + final answer).  HTML5
-                # ``<details>`` renders as a basic browser-default
-                # collapsible; arguments/result are kept as data-* attributes
-                # for any future custom renderer.
+                # Plain ``<details>`` (no ``type`` attribute) so Open WebUI
+                # does not apply the specialised Explored renderer that was
+                # grouping cards and absorbing neighbouring content.
+                # Arguments and result are placed in the body as
+                # HTML-escaped <pre> blocks so they are actually visible
+                # when the user expands the section.
+                escaped_args = html.escape(args[:5000])
+                escaped_result = html.escape(result_content[:10000])
                 details_tag = (
-                    f'\n<details'
-                    f' data-tool-name="{esc_name}"'
-                    f' data-tool-id="{tool_id}"'
-                    f' data-arguments="{safe_args}"'
-                    f' data-result="{safe_result}">\n'
+                    f'\n<details>\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
+                    f"<p><strong>Arguments:</strong></p>\n"
+                    f"<pre>{escaped_args}</pre>\n"
+                    f"<p><strong>Result:</strong></p>\n"
+                    f"<pre>{escaped_result}</pre>\n"
                     f"</details>\n"
                 )
                 log.info(
