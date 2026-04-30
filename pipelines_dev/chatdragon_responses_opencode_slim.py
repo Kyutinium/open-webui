@@ -522,18 +522,19 @@ class Pipeline:
 
     @staticmethod
     def _build_tool_explorer_tag(tool_data: dict) -> str:
-        """Build a <details> panel containing the JSON tool-result body.
+        """Build a <details type='tool_explorer'> tag with JSON body.
+
+        *tool_data* is a dict keyed by tool label, each value being a list
+        of call dicts with ``query`` and ``results`` keys.
 
         The JSON body is HTML-escaped so search-result text containing
         literal ``<think>``, ``<p>``, ``<details>``, etc. is not reparsed
-        as nested HTML by Open WebUI's markdown renderer.  Plain
-        ``<details>`` (no ``type`` attribute) avoids the specialised
-        Explored-style renderer which absorbed neighbouring content.
+        as nested HTML by Open WebUI's markdown renderer.
         """
         body = json.dumps(tool_data, ensure_ascii=False)
         body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
-            f'\n<details data-tool-results="true">\n'
+            f'\n<details type="tool_explorer" done="true">\n'
             f'<summary>Tool Results</summary>\n'
             f'{body}\n'
             f'</details>\n'
@@ -1166,26 +1167,29 @@ class Pipeline:
                 friendly = self._friendly_tool_notification(name, is_error)
                 details_tag = f"\n> {friendly}\n"
             else:
-                # Plain ``<details>`` (no ``type`` attribute) so Open WebUI
-                # does not apply the specialised Explored renderer that was
-                # grouping cards and absorbing neighbouring content.
-                # Arguments and result are placed in the body as
-                # HTML-escaped <pre> blocks so they are actually visible
-                # when the user expands the section.
-                escaped_args = html.escape(args[:5000])
-                escaped_result = html.escape(result_content[:10000])
+                safe_args = _safe_attr(args)
+                safe_result = _safe_attr(result_content)
+                # Open WebUI groups consecutive ``<details type="tool_calls">``
+                # blocks that share the same ``name=`` attribute into a single
+                # ''Explored N times'' panel.  The Claude flavour of this pipe
+                # works fine because Claude rotates tools (Read → Edit → Bash …);
+                # OpenCode + GLM re-runs the same tool multiple times, which
+                # triggered the grouping and visually swallowed neighbouring
+                # blocks.  Make ``name=`` unique per call by suffixing the
+                # tool_id; the user-visible label in <summary> stays clean.
+                unique_name = f"{esc_name}-{tool_id[:8]}"
                 details_tag = (
-                    f'\n<details>\n'
+                    f'\n<details type="tool_calls"'
+                    f' name="{unique_name}"'
+                    f' arguments="{safe_args}"'
+                    f' result="{safe_result}"'
+                    f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"<p><strong>Arguments:</strong></p>\n"
-                    f"<pre>{escaped_args}</pre>\n"
-                    f"<p><strong>Result:</strong></p>\n"
-                    f"<pre>{escaped_result}</pre>\n"
                     f"</details>\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
-                    tool_id, name, len(escaped_args), len(escaped_result),
+                    tool_id, name, len(safe_args), len(safe_result),
                 )
                 log.info("[PIPE-DEBUG] raw_args=%s", args[:500])
                 log.info("[PIPE-DEBUG] result_preview=%s", result_content[:500])
