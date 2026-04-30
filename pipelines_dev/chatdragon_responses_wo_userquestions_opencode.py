@@ -812,9 +812,14 @@ class Pipeline:
         # Default-mode <think>/tool interleaving state.  When the model is
         # mid-``<think>`` and a tool block needs to render, close think first
         # so Open WebUI does not nest the tool ``<details>`` inside the
-        # collapsed think block, then reopen on the next non-empty text chunk.
+        # collapsed think block.  Post-tool text is intentionally NOT
+        # re-wrapped in ``<think>`` — operators want intermediate progress
+        # narration ("Searching for X next…") visible as plain text, not
+        # hidden behind a collapsed thought block.  ``pending_skip_close_think``
+        # tracks how many model-emitted ``</think>`` tags to strip (one per
+        # forced pre-close) so the count of opens vs closes stays balanced.
         in_think_block = False
-        pending_reopen_think = False
+        pending_skip_close_think = 0
 
         tool_names: dict = {}
         tool_pending: dict = {}
@@ -1059,14 +1064,16 @@ class Pipeline:
                                     # Default mode: if we're mid-<think>, close
                                     # it before the tool block so Open WebUI
                                     # does not nest the <details> inside the
-                                    # collapsed think.  pending_reopen_think
-                                    # makes the next text chunk reopen <think>
-                                    # so post-tool reasoning still renders as
-                                    # collapsed.
+                                    # collapsed think.  Post-tool text is left
+                                    # as plain text (no reopen) — that is the
+                                    # intentional UX choice: intermediate
+                                    # narration like "검색 결과에서 …" should
+                                    # be visible to the user, not hidden in a
+                                    # collapsed thought block.
                                     if in_think_block:
                                         yield "</think>\n\n"
                                         in_think_block = False
-                                        pending_reopen_think = True
+                                        pending_skip_close_think += 1
                                     yield rendered
                             continue
 
@@ -1141,17 +1148,14 @@ class Pipeline:
                                         yield text_buffer[:safe_len]
                                         text_buffer = text_buffer[safe_len:]
                         else:
-                            # If a previous tool block forced a </think>
-                            # close, reopen <think> for continued reasoning
-                            # so post-tool reasoning still collapses.
-                            # Skip reopen if the chunk is just whitespace or
-                            # already starts with the model's own </think>
-                            # (which would create an empty think block).
-                            if pending_reopen_think and chunk.strip():
-                                if not chunk.lstrip().startswith("</think>"):
-                                    yield "<think>"
-                                    in_think_block = True
-                                pending_reopen_think = False
+                            # Strip stale model-emitted </think> tags that we
+                            # already pre-closed before tool blocks.  Without
+                            # this the stream would carry an unmatched </think>
+                            # that Open WebUI renders as literal text and that
+                            # would leave the open-vs-close count unbalanced.
+                            while pending_skip_close_think > 0 and "</think>" in chunk:
+                                chunk = chunk.replace("</think>", "", 1)
+                                pending_skip_close_think -= 1
 
                             # Track <think>/</think> state from this chunk so
                             # the next tool block knows whether to force-close.
