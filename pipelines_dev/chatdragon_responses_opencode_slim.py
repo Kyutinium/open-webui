@@ -529,17 +529,17 @@ class Pipeline:
 
         The JSON body is HTML-escaped so search-result text containing
         literal ``<think>``, ``<p>``, ``<details>``, etc. is not reparsed
-        as nested HTML by Open WebUI's markdown renderer (which would
-        otherwise render an unrelated ``<think>`` collapsible inside the
-        Explored block).
+        as nested HTML by Open WebUI's markdown renderer.  ``---`` markdown
+        separators around the panel break sibling-grouping with adjacent
+        tool_calls cards.
         """
         body = json.dumps(tool_data, ensure_ascii=False)
         body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
-            f'\n\n<details type="tool_explorer" done="true">\n'
+            f'\n\n---\n\n<details type="tool_explorer" done="true">\n'
             f'<summary>Tool Results</summary>\n'
             f'{body}\n'
-            f'</details>\n\n'
+            f'</details>\n\n---\n\n'
         )
 
     # ------------------------------------------------------------------
@@ -1151,23 +1151,21 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
-                # Use ``type="tool_call"`` (singular) so Open WebUI does **not**
-                # apply the ``tool_calls`` (plural) "Explored N times" grouping
-                # which visually swallowed neighbouring blocks (View Result,
-                # Thought, plain narration) into the first card.  This loses
-                # the bespoke "Explored" header UI but produces clean, fully
-                # separate cards per call -- the trade-off operators asked for.
-                # Args/result are still attached as attributes so any future
-                # custom renderer can pick them up.
+                # Markdown ``---`` horizontal rule between tool blocks so Open
+                # WebUI's "Explored N times" grouping does not visually merge
+                # consecutive tool_calls cards (which previously swallowed
+                # neighbouring View Result / Thought panels).  Using markdown
+                # syntax instead of literal ``<hr/>`` because the latter is
+                # not in the renderer's HTML whitelist and surfaced as text.
                 details_tag = (
-                    f'\n\n<details type="tool_call"'
+                    f'\n\n---\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
                     f' id="tc-{tool_id}"'
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"</details>\n\n"
+                    f"</details>\n\n---\n\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
