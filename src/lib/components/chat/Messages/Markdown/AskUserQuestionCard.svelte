@@ -6,6 +6,7 @@
 	export let data: {
 		callId?: string;
 		name?: string;
+		previousResponseId?: string;
 		questions?: Array<{
 			question: string;
 			options?: Array<{ label: string; description?: string }>;
@@ -14,12 +15,6 @@
 		raw?: unknown;
 	};
 	export let disabled: boolean = false;
-
-	// Hidden marker prefix added to the chat message that carries the user's
-	// answer. The pipeline strips this before forwarding to the wrapper, and
-	// UserMessage.svelte uses it to render a compact "answered" chip instead
-	// of a normal user message bubble. Must stay in sync with both sides.
-	const ANSWER_MARKER = '​::AUQ_ANSWER::';
 
 	// Meta options inserted by the model that look like "Other / 직접 입력"
 	// shouldn't be sent as the answer — clicking them should focus the
@@ -149,13 +144,23 @@
 			answerText = JSON.stringify(result);
 		}
 
-		// Prefix with the hidden marker so the pipeline can strip it and the
-		// UserMessage renderer can collapse the bubble.
-		const wireText = ANSWER_MARKER + answerText;
-
+		// Route the answer through the dedicated AskUserQuestion channel.
+		// Chat.svelte listens for ``auq:answer:submit`` and POSTs to
+		// ``/api/v1/auq/answer``, which relays straight to the gateway as
+		// ``function_call_output``. This bypasses the chat-completion path
+		// entirely so title-task races, context injection, and
+		// per-process pending-state can't corrupt the reply.
 		await tick();
 		try {
-			window.postMessage({ type: 'input:prompt:submit', text: wireText }, window.origin);
+			window.postMessage(
+				{
+					type: 'auq:answer:submit',
+					callId: data?.callId ?? '',
+					answer: answerText,
+					previousResponseId: data?.previousResponseId ?? ''
+				},
+				window.origin
+			);
 		} catch (e) {
 			console.error('[AskUserQuestionCard] failed to post answer:', e);
 		}
