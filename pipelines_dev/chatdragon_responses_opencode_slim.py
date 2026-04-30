@@ -1169,17 +1169,20 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
-                # Open WebUI groups consecutive ``<details type="tool_calls">``
-                # blocks that share the same ``name=`` attribute into a single
-                # ''Explored N times'' panel.  Empty or duplicate tool_id (rare
-                # but possible from upstream) made the grouping trigger
-                # intermittently.  Generate a fresh uuid suffix every call so
-                # ``name=`` is guaranteed unique regardless of tool_id quality;
-                # the user-visible label in <summary> stays clean.
-                unique_suffix = (tool_id[:8] if tool_id else "") + uuid4().hex[:8]
+                # Open WebUI groups consecutive ``<details>`` tokens whose
+                # ``type`` is in ``{tool_calls, reasoning, code_interpreter}``
+                # into one ``detail_group`` (the ''Explored N times'' panel).
+                # Reasoning blocks (LiteLLM-merged ``<think>`` tags) also count,
+                # which is why neighbouring Thought collapsibles got swallowed.
+                # The grouping flushes on ANY non-groupable token, so we lead
+                # each tool_calls emit with a zero-width-space paragraph
+                # (``​`` wrapped in blank lines).  marked.js parses this as
+                # a ``paragraph`` token -- non-groupable, invisible to the user,
+                # zero added spacing -- which forces flushDetailGroup() and
+                # leaves each tool block in its own card.
                 details_tag = (
-                    f'\n<details type="tool_calls"'
-                    f' name="{esc_name}-{unique_suffix}"'
+                    f'\n\n​\n\n<details type="tool_calls"'
+                    f' name="{esc_name}"'
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'
