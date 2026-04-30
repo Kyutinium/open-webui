@@ -809,6 +809,13 @@ class Pipeline:
         RESPONSE_CLOSE_TAG = "</response>"
         TOOL_DETAILS_PREFIX = "\n\n<details "
 
+        # Default-mode <think>/tool interleaving state.  When the model is
+        # mid-``<think>`` and a tool block needs to render, close think first
+        # so Open WebUI does not nest the tool ``<details>`` inside the
+        # collapsed think block, then reopen on the next non-empty text chunk.
+        in_think_block = False
+        pending_reopen_think = False
+
         tool_names: dict = {}
         tool_pending: dict = {}
         any_tool_used = False
@@ -1049,6 +1056,17 @@ class Pipeline:
                                         text_buffer = ""
                                     yield rendered
                                 else:
+                                    # Default mode: if we're mid-<think>, close
+                                    # it before the tool block so Open WebUI
+                                    # does not nest the <details> inside the
+                                    # collapsed think.  pending_reopen_think
+                                    # makes the next text chunk reopen <think>
+                                    # so post-tool reasoning still renders as
+                                    # collapsed.
+                                    if in_think_block:
+                                        yield "</think>\n\n"
+                                        in_think_block = False
+                                        pending_reopen_think = True
                                     yield rendered
                             continue
 
@@ -1123,6 +1141,25 @@ class Pipeline:
                                         yield text_buffer[:safe_len]
                                         text_buffer = text_buffer[safe_len:]
                         else:
+                            # If a previous tool block forced a </think>
+                            # close, reopen <think> for continued reasoning
+                            # so post-tool reasoning still collapses.
+                            # Skip reopen if the chunk is just whitespace or
+                            # already starts with the model's own </think>
+                            # (which would create an empty think block).
+                            if pending_reopen_think and chunk.strip():
+                                if not chunk.lstrip().startswith("</think>"):
+                                    yield "<think>"
+                                    in_think_block = True
+                                pending_reopen_think = False
+
+                            # Track <think>/</think> state from this chunk so
+                            # the next tool block knows whether to force-close.
+                            if "<think>" in chunk:
+                                in_think_block = True
+                            if "</think>" in chunk:
+                                in_think_block = False
+
                             full_text_acc += chunk
                             yield chunk
                 finally:
