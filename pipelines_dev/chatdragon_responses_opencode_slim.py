@@ -1171,16 +1171,15 @@ class Pipeline:
                 safe_result = _safe_attr(result_content)
                 # Open WebUI groups consecutive ``<details type="tool_calls">``
                 # blocks that share the same ``name=`` attribute into a single
-                # ''Explored N times'' panel.  The Claude flavour of this pipe
-                # works fine because Claude rotates tools (Read → Edit → Bash …);
-                # OpenCode + GLM re-runs the same tool multiple times, which
-                # triggered the grouping and visually swallowed neighbouring
-                # blocks.  Make ``name=`` unique per call by suffixing the
-                # tool_id; the user-visible label in <summary> stays clean.
-                unique_name = f"{esc_name}-{tool_id[:8]}"
+                # ''Explored N times'' panel.  Empty or duplicate tool_id (rare
+                # but possible from upstream) made the grouping trigger
+                # intermittently.  Generate a fresh uuid suffix every call so
+                # ``name=`` is guaranteed unique regardless of tool_id quality;
+                # the user-visible label in <summary> stays clean.
+                unique_suffix = (tool_id[:8] if tool_id else "") + uuid4().hex[:8]
                 details_tag = (
                     f'\n<details type="tool_calls"'
-                    f' name="{unique_name}"'
+                    f' name="{esc_name}-{unique_suffix}"'
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'
