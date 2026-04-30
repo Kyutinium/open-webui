@@ -522,21 +522,18 @@ class Pipeline:
 
     @staticmethod
     def _build_tool_explorer_tag(tool_data: dict) -> str:
-        """Build a <details type='tool_explorer'> tag with JSON body.
-
-        *tool_data* is a dict keyed by tool label, each value being a list
-        of call dicts with ``query`` and ``results`` keys.
+        """Build a <details> panel containing the JSON tool-result body.
 
         The JSON body is HTML-escaped so search-result text containing
         literal ``<think>``, ``<p>``, ``<details>``, etc. is not reparsed
-        as nested HTML by Open WebUI's markdown renderer.  Leading ``---``
-        markdown separator breaks sibling-grouping with adjacent
-        tool_calls cards.
+        as nested HTML by Open WebUI's markdown renderer.  Plain
+        ``<details>`` (no ``type`` attribute) avoids the specialised
+        Explored-style renderer which absorbed neighbouring content.
         """
         body = json.dumps(tool_data, ensure_ascii=False)
         body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
-            f'\n\n---\n\n<details type="tool_explorer" done="true">\n'
+            f'\n<details data-tool-results="true">\n'
             f'<summary>Tool Results</summary>\n'
             f'{body}\n'
             f'</details>\n'
@@ -1171,20 +1168,19 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
-                # Markdown ``---`` horizontal rule BEFORE each tool block so
-                # Open WebUI's "Explored N times" grouping cannot visually
-                # merge consecutive cards.  Only the leading separator is
-                # emitted -- a trailing one would double up between adjacent
-                # blocks and inflate the spacing.  Using markdown syntax
-                # rather than literal ``<hr/>`` because the latter is not in
-                # the renderer's HTML whitelist and surfaced as text.
+                # Plain ``<details>`` without a ``type`` attribute — the
+                # ``type="tool_calls"`` specialised renderer (Explored UI) was
+                # both grouping consecutive cards and visually absorbing the
+                # post-block content (Thought + final answer).  HTML5
+                # ``<details>`` renders as a basic browser-default
+                # collapsible; arguments/result are kept as data-* attributes
+                # for any future custom renderer.
                 details_tag = (
-                    f'\n\n---\n\n<details type="tool_calls"'
-                    f' name="{esc_name}"'
-                    f' id="tc-{tool_id}"'
-                    f' arguments="{safe_args}"'
-                    f' result="{safe_result}"'
-                    f' done="true">\n'
+                    f'\n<details'
+                    f' data-tool-name="{esc_name}"'
+                    f' data-tool-id="{tool_id}"'
+                    f' data-arguments="{safe_args}"'
+                    f' data-result="{safe_result}">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
                     f"</details>\n"
                 )
