@@ -526,8 +526,15 @@ class Pipeline:
 
         *tool_data* is a dict keyed by tool label, each value being a list
         of call dicts with ``query`` and ``results`` keys.
+
+        The JSON body is HTML-escaped so search-result text containing
+        literal ``<think>``, ``<p>``, ``<details>``, etc. is not reparsed
+        as nested HTML by Open WebUI's markdown renderer (which would
+        otherwise render an unrelated ``<think>`` collapsible inside the
+        Explored block).
         """
         body = json.dumps(tool_data, ensure_ascii=False)
+        body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
             f'\n\n<details type="tool_explorer" done="true">\n'
             f'<summary>Tool Results</summary>\n'
@@ -1047,6 +1054,9 @@ class Pipeline:
             # Emit final "검색된 문서 보기" button with all collected results
             if tool_explorer_data:
                 body = json.dumps(tool_explorer_data, ensure_ascii=False)
+                # Same HTML-escape rationale as _build_tool_explorer_tag:
+                # search-result text may contain literal <think>, <p>, etc.
+                body = body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 yield (
                     f'\n\n<details type="search_results_button" done="true">\n'
                     f'<summary>Search Results</summary>\n'
