@@ -1172,14 +1172,20 @@ class Pipeline:
                 # Open WebUI groups consecutive ``<details>`` tokens whose
                 # ``type`` is in ``{tool_calls, reasoning, code_interpreter}``
                 # into one ``detail_group`` (the ''Explored N times'' panel).
-                # Reasoning blocks (LiteLLM-merged ``<think>`` tags) also count,
-                # which is why neighbouring Thought collapsibles got swallowed.
-                # The grouping flushes on ANY non-groupable token, so we lead
-                # each tool_calls emit with a zero-width-space paragraph
-                # (``​`` wrapped in blank lines).  marked.js parses this as
-                # a ``paragraph`` token -- non-groupable, invisible to the user,
-                # zero added spacing -- which forces flushDetailGroup() and
-                # leaves each tool block in its own card.
+                # Open WebUI's middleware converts ``<think>...</think>`` into
+                # ``<details type="reasoning">`` (see backend middleware.py
+                # _render_output), which means Thought blocks adjacent to
+                # tool_calls get pulled into the same panel.
+                #
+                # The grouping flushes on ANY non-groupable token.  Wrap each
+                # tool_calls emit with a zero-width-space paragraph BEFORE
+                # *and* AFTER -- marked.js parses them as paragraph tokens
+                # which break the consecutive-groupable streak on both sides.
+                # Both separators are required: the leading break isolates
+                # this card from a preceding reasoning block, the trailing
+                # break isolates it from the next reasoning block.  The
+                # zero-width content renders invisibly with effectively zero
+                # spacing.
                 details_tag = (
                     f'\n\n​\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
@@ -1187,7 +1193,7 @@ class Pipeline:
                     f' result="{safe_result}"'
                     f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"</details>\n"
+                    f"</details>\n\n​\n\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
