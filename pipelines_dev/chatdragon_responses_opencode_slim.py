@@ -749,17 +749,19 @@ class Pipeline:
     def _stream(self, payload: dict, task: Optional[str], chat_id: str = "") -> Iterator[str]:
         full_text_acc = ""  # Accumulate full response for image URL detection
 
-        # <think>/tool interleaving state.  When LiteLLM has merged reasoning
-        # into ``<think>...</think>`` and the model fires a tool call mid-think,
-        # we close ``<think>`` before emitting the tool ``<details>`` so Open
-        # WebUI does not nest the tool block inside the collapsed thought.
-        # Post-tool text is left as plain text — operators want progress
-        # narration visible to users, not hidden behind another collapsed
-        # thought block.  ``pending_skip_close_think`` counts how many
-        # model-emitted ``</think>`` tags to strip (one per forced pre-close)
-        # so the open/close balance is preserved.
+        # ``<think>...</think>`` reasoning content is stripped before it
+        # reaches the client (see the per-chunk strip below).  Reasoning
+        # collapsibles caused several rendering issues in Open WebUI:
+        # grouping with adjacent tool_calls into "Explored N times",
+        # literal-HTML leaks for the second reasoning block in a
+        # multi-tool turn, and tag-balance edge cases when LiteLLM emits
+        # multiple ``<think>`` opens without matching closes.  Removing
+        # them entirely is simpler and matches the operational UX
+        # operators wanted: tool cards plus the final answer, no
+        # internal reasoning narration.  ``in_think_block`` tracks
+        # whether we are currently inside a stripped span so multi-chunk
+        # reasoning content stays fully suppressed.
         in_think_block = False
-        pending_skip_close_think = 0
 
         tool_names: dict = {}
         tool_pending: dict = {}
@@ -974,14 +976,6 @@ class Pipeline:
                                             explorer_tag = self._build_tool_explorer_tag(
                                                 {label: [call_data]}
                                             )
-                                            # Close <think> first if mid-flight
-                                            # so Open WebUI does not nest the
-                                            # explorer block inside collapsed
-                                            # thought.
-                                            if in_think_block:
-                                                yield "</think>\n\n"
-                                                in_think_block = False
-                                                pending_skip_close_think += 1
                                             yield explorer_tag
                                             log.info(
                                                 "[PIPE] tool_explorer: %s +%d results (live)",
@@ -992,14 +986,6 @@ class Pipeline:
                                 event_type, sys_event, tool_names, tool_pending,
                             )
                             if rendered:
-                                # Close <think> first if mid-flight so Open
-                                # WebUI does not nest the tool <details>
-                                # inside the collapsed thought.  Post-tool
-                                # text stays as plain progress narration.
-                                if in_think_block:
-                                    yield "</think>\n\n"
-                                    in_think_block = False
-                                    pending_skip_close_think += 1
                                 yield rendered
                             continue
 
@@ -1010,40 +996,32 @@ class Pipeline:
                         if not chunk:
                             continue
 
-                        # Process <think>/</think> tags in order so we keep
-                        # at most one open <think> at a time.  LiteLLM
-                        # ``merge_reasoning_content_in_choices`` can emit
-                        # multiple <think> opens (one per reasoning batch
-                        # between tool calls) without matching closes; if
-                        # we let those through, Open WebUI keeps consuming
-                        # everything (tool blocks, plain narration, the
-                        # final answer) into one giant Thought collapsible.
+                        # Strip ALL <think>...</think> reasoning content
+                        # before yielding to Open WebUI.  Reasoning blocks
+                        # are converted by Open WebUI's middleware into
+                        # <details type="reasoning"> which Open WebUI then
+                        # groups with adjacent <details type="tool_calls">
+                        # into the "Explored N times" panel, and the
+                        # rendering for the second+ reasoning block in a
+                        # multi-tool turn is unstable (literal HTML leaks).
+                        # The model's reasoning is for its own benefit; the
+                        # user-visible UX is cleaner without it.  Tool
+                        # blocks (View Result cards) plus the final answer
+                        # text remain.
                         cleaned_parts = []
                         cursor = 0
                         for m in re.finditer(r'<think>|</think>', chunk):
-                            cleaned_parts.append(chunk[cursor:m.start()])
+                            if not in_think_block:
+                                # Text BEFORE this tag is normal content.
+                                cleaned_parts.append(chunk[cursor:m.start()])
                             tag = m.group(0)
                             if tag == "<think>":
-                                if in_think_block:
-                                    # Redundant open while already in think
-                                    # — drop it.
-                                    pass
-                                else:
-                                    in_think_block = True
-                                    cleaned_parts.append(tag)
+                                in_think_block = True
                             else:  # </think>
-                                if pending_skip_close_think > 0:
-                                    pending_skip_close_think -= 1
-                                    # Strip — already force-closed earlier.
-                                elif in_think_block:
-                                    in_think_block = False
-                                    cleaned_parts.append(tag)
-                                else:
-                                    # Stray close with no matching open
-                                    # — drop it.
-                                    pass
+                                in_think_block = False
                             cursor = m.end()
-                        cleaned_parts.append(chunk[cursor:])
+                        if not in_think_block:
+                            cleaned_parts.append(chunk[cursor:])
                         chunk = "".join(cleaned_parts)
                         if not chunk:
                             continue
@@ -1060,12 +1038,10 @@ class Pipeline:
             log.error("Stream error: %s", e)
             yield f"\n\nError: {e}"
         finally:
-            # If the stream ended while still inside a <think> block (model
-            # didn't emit </think>) close it so the rest of the rendered UI
-            # isn't swallowed by the collapsed think block.
-            if in_think_block:
-                yield "</think>"
-                in_think_block = False
+            # No <think> tags ever reach the client (stripped above), so
+            # nothing to flush here on its own behalf.  Reset state for
+            # cleanliness.
+            in_think_block = False
 
             # (tool_explorer tags emitted live during streaming)
 
@@ -1169,27 +1145,22 @@ class Pipeline:
             else:
                 safe_args = _safe_attr(args)
                 safe_result = _safe_attr(result_content)
-                # Open WebUI groups consecutive ``<details>`` tokens whose
-                # ``type`` is in ``{tool_calls, reasoning, code_interpreter}``
-                # into one ``detail_group`` (the ''Explored N times'' panel).
-                # ``<think>...</think>`` is converted by middleware.py into
-                # ``<details type="reasoning">``, so neighbouring Thought
-                # cards merged into the Explored panel.
-                #
-                # Wrap each tool_calls emit with a single ``<br/>`` on its own
-                # line.  marked.js parses a lone ``<br/>`` as an html block
-                # token (non-groupable, flushes the consecutive-details
-                # streak) and HTMLToken.svelte has a special case that
-                # renders it as a real ``<br/>`` element rather than as
-                # literal text -- minimal vertical space, invisible content.
+                # Original Claude-pipe-style emission.  <think>/</think>
+                # reasoning blocks are stripped from the text stream before
+                # they reach Open WebUI (see _stream), so there are no
+                # <details type="reasoning"> blocks for tool_calls to be
+                # grouped with.  Multiple consecutive same-name tool_calls
+                # may still group into ''Explored N times'' -- that is Open
+                # WebUI's intended UI for multi-tool runs and matches the
+                # Claude-flavoured pipe behaviour.
                 details_tag = (
-                    f'\n\n<br/>\n\n<details type="tool_calls"'
+                    f'\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"</details>\n\n<br/>\n\n"
+                    f"</details>\n\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
