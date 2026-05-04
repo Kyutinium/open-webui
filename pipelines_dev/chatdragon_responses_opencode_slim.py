@@ -762,6 +762,13 @@ class Pipeline:
         # whether we are currently inside a stripped span so multi-chunk
         # reasoning content stays fully suppressed.
         in_think_block = False
+        # Holds a chunk-trailing prefix that *could* be the start of a
+        # ``<think>`` or ``</think>`` tag split across chunk boundaries
+        # (e.g. one chunk ending ``...</thi`` and the next starting
+        # ``nk>answer``).  Without this, a split close-tag is invisible
+        # to ``re.finditer`` and we would suppress the entire final
+        # answer.  Re-prepended to the next chunk before stripping.
+        think_tag_holdback = ""
 
         tool_names: dict = {}
         tool_pending: dict = {}
@@ -999,20 +1006,38 @@ class Pipeline:
                         # Strip ALL <think>...</think> reasoning content
                         # before yielding to Open WebUI.  Reasoning blocks
                         # are converted by Open WebUI's middleware into
-                        # <details type="reasoning"> which Open WebUI then
-                        # groups with adjacent <details type="tool_calls">
-                        # into the "Explored N times" panel, and the
-                        # rendering for the second+ reasoning block in a
-                        # multi-tool turn is unstable (literal HTML leaks).
-                        # The model's reasoning is for its own benefit; the
-                        # user-visible UX is cleaner without it.  Tool
-                        # blocks (View Result cards) plus the final answer
-                        # text remain.
+                        # <details type="reasoning"> which then gets
+                        # grouped with adjacent <details type="tool_calls">
+                        # into the "Explored N times" panel; the rendering
+                        # for the second+ reasoning block in a multi-tool
+                        # turn is unstable (literal HTML leaks).  The
+                        # model's reasoning is for its own benefit, so we
+                        # suppress it entirely -- only tool cards and the
+                        # final answer text reach the client.
+                        #
+                        # Two safety nets here:
+                        #   1. ``think_tag_holdback`` re-prepends any
+                        #      previous chunk's trailing partial-tag
+                        #      candidate so a close ``</think>`` split
+                        #      across chunks (``...</thi`` + ``nk>...``)
+                        #      is still detected.
+                        #   2. A trailing partial-tag candidate from this
+                        #      chunk is held back for the next iteration.
+                        chunk = think_tag_holdback + chunk
+                        think_tag_holdback = ""
+                        for tag in ("</think>", "<think>"):
+                            for n in range(len(tag) - 1, 0, -1):
+                                if chunk.endswith(tag[:n]):
+                                    think_tag_holdback = tag[:n]
+                                    chunk = chunk[: -n]
+                                    break
+                            if think_tag_holdback:
+                                break
+
                         cleaned_parts = []
                         cursor = 0
                         for m in re.finditer(r'<think>|</think>', chunk):
                             if not in_think_block:
-                                # Text BEFORE this tag is normal content.
                                 cleaned_parts.append(chunk[cursor:m.start()])
                             tag = m.group(0)
                             if tag == "<think>":
@@ -1038,10 +1063,19 @@ class Pipeline:
             log.error("Stream error: %s", e)
             yield f"\n\nError: {e}"
         finally:
-            # No <think> tags ever reach the client (stripped above), so
-            # nothing to flush here on its own behalf.  Reset state for
-            # cleanliness.
-            in_think_block = False
+            # If the stream ended while still mid-<think>, LiteLLM never
+            # emitted a matching close.  We can't recover the suppressed
+            # span (it was meant to be reasoning), but log loud so an
+            # operator can spot a malformed upstream response.
+            if in_think_block:
+                log.warning(
+                    "[PIPE] stream ended with unclosed <think> -- LiteLLM "
+                    "did not emit </think>; any final answer text after "
+                    "the unclosed open was suppressed.  Consider checking "
+                    "merge_reasoning_content_in_choices/THINK_OUTPUT_MODE.",
+                )
+                in_think_block = False
+            think_tag_holdback = ""
 
             # (tool_explorer tags emitted live during streaming)
 
