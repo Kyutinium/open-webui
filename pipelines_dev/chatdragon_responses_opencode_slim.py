@@ -1176,22 +1176,20 @@ class Pipeline:
                 # ``<details type="reasoning">``, so neighbouring Thought
                 # cards merged into the Explored panel.
                 #
-                # marked.js flushes the consecutive-groupable streak on ANY
-                # non-groupable token.  Wrap each tool_calls emit with HTML
-                # comment separators (``<!--sep-->``) -- parsed as a
-                # standalone ``html`` token (non-groupable), rendered as
-                # nothing visible, no <p> margin to inflate spacing.
-                #
-                # Both sides matter: leading break isolates from a preceding
-                # reasoning card, trailing break isolates from the next one.
+                # Wrap each tool_calls emit with a single ``<br/>`` on its own
+                # line.  marked.js parses a lone ``<br/>`` as an html block
+                # token (non-groupable, flushes the consecutive-details
+                # streak) and HTMLToken.svelte has a special case that
+                # renders it as a real ``<br/>`` element rather than as
+                # literal text -- minimal vertical space, invisible content.
                 details_tag = (
-                    f'\n\n<!--sep-->\n\n<details type="tool_calls"'
+                    f'\n\n<br/>\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'
                     f"<summary>Tool: {esc_name}</summary>\n"
-                    f"</details>\n\n<!--sep-->\n\n"
+                    f"</details>\n\n<br/>\n\n"
                 )
                 log.info(
                     "[PIPE-DEBUG] tool_id=%s name=%s args_len=%d result_len=%d",
