@@ -12,9 +12,7 @@ MCP 서버는 게이트웨이에 *붙는* 외부 프로세스이지, 게이트�
 
 ## 1. High-Level Overview
 
-![High-Level Pipeline Overview](images/pipeline-highlevel.svg)
-
-> 위 이미지는 아래 Mermaid 소스로부터 렌더링된 SVG 입니다. 슬라이드에 직접 사용하려면 [docs/images/pipeline-highlevel.svg](images/pipeline-highlevel.svg) 를 가져다 쓰세요.
+### Mermaid (GitHub 라이브 렌더)
 
 ```mermaid
 flowchart LR
@@ -79,6 +77,12 @@ flowchart LR
     class Proxy,Strip proxy
     class M1,M2,M3,M4,M5 llm
 ```
+
+### SVG (슬라이드/발표용 정적 이미지)
+
+![High-Level Pipeline Overview](images/pipeline-highlevel.svg)
+
+> 위 Mermaid 소스를 mermaid-cli 로 렌더링한 SVG 입니다. 슬라이드에 그대로 쓰거나 PNG 로 변환해 사용하세요. 파일: [`docs/images/pipeline-highlevel.svg`](images/pipeline-highlevel.svg)
 
 ---
 
