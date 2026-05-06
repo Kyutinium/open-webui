@@ -4,11 +4,17 @@
 
 전체 흐름 한 줄 요약:
 
-> **User → Open WebUI → ChatDRAGON Pipe → Oh-My-Gateway (Agent + memory.md + MCP) → LiteLLM Proxy → vLLM/SGLang LLM**
+> **User → Open WebUI → ChatDRAGON Pipe → Oh-My-Gateway (Agent + memory.md) ↔ External MCP Servers / → LiteLLM Proxy → vLLM/SGLang LLM**
+
+MCP 서버는 게이트웨이에 *붙는* 외부 프로세스이지, 게이트웨이 내부 모듈이 아닙니다.
 
 ---
 
 ## 1. High-Level Overview
+
+![High-Level Pipeline Overview](images/pipeline-highlevel.svg)
+
+> 위 이미지는 아래 Mermaid 소스로부터 렌더링된 SVG 입니다. 슬라이드에 직접 사용하려면 [docs/images/pipeline-highlevel.svg](images/pipeline-highlevel.svg) 를 가져다 쓰세요.
 
 ```mermaid
 flowchart LR
@@ -24,7 +30,12 @@ flowchart LR
         Session[Session Manager<br/>previous_response_id]
         Workspace["Workspace<br/>(USER_WORKSPACES_DIR)<br/>📝 memory.md"]
         Agent["Agent Backend<br/>Claude SDK / OpenCode / Codex"]
-        MCP[MCP Servers<br/>tools / skills]
+    end
+
+    subgraph MCPEXT["🔌 External MCP Servers (attached, not inside)"]
+        MCP1["MCP Server A<br/>fs / bash"]
+        MCP2["MCP Server B<br/>web / search"]
+        MCP3["MCP Server C<br/>custom skills"]
     end
 
     subgraph LITELLM["🔀 LiteLLM Serving"]
@@ -46,7 +57,9 @@ flowchart LR
     RespAPI --> Session
     Session --> Workspace
     Session --> Agent
-    Agent <-- "tools" --> MCP
+    Agent <-. "MCP protocol<br/>(stdio / http)" .-> MCP1
+    Agent <-. "MCP protocol" .-> MCP2
+    Agent <-. "MCP protocol" .-> MCP3
     Agent -- "OpenAI API<br/>via litellm" --> Proxy
     Proxy --> Strip
     Strip --> M1
@@ -57,10 +70,12 @@ flowchart LR
 
     classDef ui fill:#E3F2FD,stroke:#1976D2,color:#0D47A1
     classDef gw fill:#FFF3E0,stroke:#F57C00,color:#E65100
+    classDef mcp fill:#FFEBEE,stroke:#C62828,color:#B71C1C
     classDef proxy fill:#F3E5F5,stroke:#7B1FA2,color:#4A148C
     classDef llm fill:#E8F5E9,stroke:#388E3C,color:#1B5E20
     class UI,Pipe ui
-    class RespAPI,Session,Workspace,Agent,MCP gw
+    class RespAPI,Session,Workspace,Agent gw
+    class MCP1,MCP2,MCP3 mcp
     class Proxy,Strip proxy
     class M1,M2,M3,M4,M5 llm
 ```
@@ -79,7 +94,7 @@ sequenceDiagram
     participant P as ChatDRAGON Pipe
     participant G as Oh-My-Gateway<br/>(/v1/responses)
     participant A as Agent<br/>(Claude/OpenCode)
-    participant M as MCP Tools<br/>+ memory.md
+    participant M as External MCP<br/>Servers
     participant L as LiteLLM Proxy
     participant V as vLLM / SGLang
 
@@ -87,7 +102,7 @@ sequenceDiagram
     W->>P: chat completion request
     Note over P: 메시지 정규화,<br/>session 키 결정,<br/>SSE 핸들링 셋업
     P->>G: POST /v1/responses<br/>{model, input, previous_response_id, stream}
-    G->>G: Session 조회/생성<br/>(workspace 격리)
+    G->>G: Session 조회/생성<br/>workspace 격리, memory.md 로드
     G->>A: 에이전트 호출<br/>(system_prompt + history)
 
     loop 추론 루프 (multi-turn tool use)
@@ -95,8 +110,9 @@ sequenceDiagram
         L->>V: hosted_vllm / openai 백엔드 호출
         V-->>L: tokens (+ reasoning_content)
         L-->>A: strip_thinking 적용 후 토큰
-        A->>M: tool_call (read/write memory.md, MCP)
+        A->>M: tool_call (MCP protocol over stdio/http)
         M-->>A: tool_result
+        A->>G: read/write memory.md<br/>(workspace fs)
     end
 
     A-->>G: 최종 답변 + usage
@@ -113,9 +129,10 @@ sequenceDiagram
 |---|---|---|---|
 | Frontend / Chat UI | `kyutinium/open-webui` | 사용자 입출력, 채팅 UX, 모델 셀렉터 | `src/`, `backend/` |
 | Pipe (어댑터) | `kyutinium/open-webui` | OpenAI Chat ↔ Responses API 변환, SSE 핸들링, 세션 키 매핑 | `pipelines_dev/chatdragon_*.py` |
-| Gateway | `jiny0ung-shin/oh-my-gateway` | `/v1/responses` 표준화, 세션/워크스페이스/MCP/에이전트 백엔드 라우팅 | `src/main.py`, `src/session_manager.py`, `src/workspace_manager.py`, `src/mcp_config.py`, `src/backends/` |
+| Gateway | `jiny0ung-shin/oh-my-gateway` | `/v1/responses` 표준화, 세션/워크스페이스/MCP 클라이언트/에이전트 백엔드 라우팅 | `src/main.py`, `src/session_manager.py`, `src/workspace_manager.py`, `src/mcp_config.py`, `src/backends/` |
 | Agent Backend | `kyutinium/opencode` (+ Claude Agent SDK) | 도구 사용 루프, 코딩 에이전트 실행 | OpenCode CLI / Claude SDK |
-| Memory | gateway workspace | 대화/세션 단위 영속 메모리 | `working_dir/<session>/memory.md` |
+| Memory | gateway workspace | 대화/세션 단위 영속 메모리 (게이트웨이가 마운트하는 fs) | `working_dir/<session>/memory.md` |
+| **MCP Servers (외부)** | 각 MCP 구현체 (별도 프로세스) | 게이트웨이/에이전트가 클라이언트로서 연결하는 외부 도구 서버 | stdio 서브프로세스 또는 HTTP endpoint |
 | Model Proxy | `kyutinium/litellm_serving` | OpenAI/Anthropic 호환 라우팅, reasoning 후처리 | `litellm_config.yaml`, `strip_thinking.py` |
 | LLM Serving | (vLLM / SGLang 인스턴스) | 실제 토큰 생성 | 포트별 모델 서버 |
 
@@ -123,33 +140,40 @@ sequenceDiagram
 
 ## 4. Inside Oh-My-Gateway
 
-게이트웨이 내부 구조와 memory.md / MCP / 워크스페이스의 관계입니다.
+게이트웨이 내부 구조와 외부에 붙는 MCP 서버의 관계입니다. **MCP 서버 자체는 게이트웨이 외부 프로세스**이고, 게이트웨이 안에는 그것을 가리키는 *config* 와 *MCP client* 만 있습니다.
 
 ```mermaid
 flowchart TB
     In["POST /v1/responses<br/>{model, input,<br/>previous_response_id,<br/>user, metadata}"]
 
-    subgraph Routing["요청 라우팅"]
-        Auth[API Key / Admin 인증]
-        Rate[Rate Limiter]
-        Reg[Backend Registry<br/>claude / opencode / codex]
+    subgraph GW["Oh-My-Gateway (FastAPI) — 게이트웨이 내부"]
+        subgraph Routing["요청 라우팅"]
+            Auth[API Key / Admin 인증]
+            Rate[Rate Limiter]
+            Reg[Backend Registry<br/>claude / opencode / codex]
+        end
+
+        subgraph Sess["Session & Workspace"]
+            SM[Session Manager<br/>previous_response_id]
+            WM["Workspace Manager<br/>USER_WORKSPACES_DIR/&lt;user&gt;/"]
+            Mem["📝 memory.md<br/>(에이전트가 read/write)"]
+            Files["기타 작업 파일<br/>(skills, plugins)"]
+        end
+
+        subgraph Backend["Agent Execution"]
+            SP[System Prompt<br/>preset 주입]
+            Loop[Agent Tool Loop]
+            MCPC["MCP Config (MCP_CONFIG)<br/>+ MCP Client"]
+        end
     end
 
-    subgraph Sess["Session & Workspace"]
-        SM[Session Manager<br/>previous_response_id]
-        WM["Workspace Manager<br/>USER_WORKSPACES_DIR/&lt;user&gt;/"]
-        Mem["📝 memory.md<br/>(에이전트가 read/write)"]
-        Files["기타 작업 파일<br/>(skills, plugins)"]
+    subgraph Ext["외부 (게이트웨이 밖)"]
+        Tools1["MCP Server A<br/>fs / bash"]
+        Tools2["MCP Server B<br/>web / search"]
+        Tools3["MCP Server C<br/>custom skills"]
+        LLM[(LiteLLM Proxy)]
     end
 
-    subgraph Backend["Agent Execution"]
-        SP[System Prompt<br/>preset 주입]
-        Loop[Agent Tool Loop]
-        MCPC["MCP Config<br/>(MCP_CONFIG)"]
-        Tools["MCP Tools<br/>fs, bash, web, ...<br/>+ Skills"]
-    end
-
-    LLM[(LiteLLM Proxy)]
     SSE["SSE Stream<br/>response.* events"]
 
     In --> Auth --> Rate --> Reg
@@ -157,18 +181,23 @@ flowchart TB
     WM --> Mem
     WM --> Files
     Reg --> SP --> Loop
-    Loop <-- "tools/use" --> MCPC --> Tools
-    Tools <-- "read/write" --> Mem
+    Loop -- "tools/use" --> MCPC
+    MCPC <-. "MCP protocol<br/>(stdio / http)" .-> Tools1
+    MCPC <-. "MCP protocol" .-> Tools2
+    MCPC <-. "MCP protocol" .-> Tools3
+    Loop <-- "read/write" --> Mem
     Loop -- "LLM call" --> LLM
     LLM --> Loop
     Loop --> SSE
 
     classDef sess fill:#FFF3E0,stroke:#F57C00
     classDef mem fill:#FFEBEE,stroke:#C62828,color:#B71C1C
-    classDef tool fill:#E8EAF6,stroke:#3F51B5
+    classDef cfg fill:#E8EAF6,stroke:#3F51B5
+    classDef ext fill:#FFEBEE,stroke:#C62828,color:#B71C1C,stroke-dasharray: 4 2
     class SM,WM,Files sess
     class Mem mem
-    class MCPC,Tools tool
+    class MCPC cfg
+    class Tools1,Tools2,Tools3 ext
 ```
 
 핵심 포인트:
@@ -176,7 +205,7 @@ flowchart TB
 - **세션 연속성**: `previous_response_id` 로 동일 세션의 multi-turn 을 잇는다. 다른 백엔드 혼용은 거부.
 - **워크스페이스 격리**: 기본은 임시 세션 디렉토리, `USER_WORKSPACES_DIR` 설정 시 사용자별 디렉토리.
 - **memory.md**: 워크스페이스 안의 평범한 파일이지만, 시스템 프롬프트/스킬이 "장기 기억" 으로 사용하도록 가이드한다. 에이전트가 매 턴 자연스럽게 read/write.
-- **MCP**: 게이트웨이 공용 `MCP_CONFIG` 로 도구를 주입. OpenCode 매니지드 모드에선 `opencode serve` 설정도 자동 생성.
+- **MCP 는 외부 프로세스**: 게이트웨이는 `MCP_CONFIG` 만 들고 있고, 실제 도구는 stdio 서브프로세스 또는 별도 HTTP endpoint 로 떠있는 외부 MCP 서버. OpenCode 매니지드 모드에선 `opencode serve` 의 MCP 설정도 게이트웨이가 자동 생성해 넘긴다.
 
 ---
 
@@ -227,7 +256,7 @@ flowchart LR
 2. **Oh-My-Gateway 가 하는 일**
    - 멀티 백엔드(Claude SDK / OpenCode / Codex)를 하나의 `/v1/responses` 로 통일.
    - 사용자별 워크스페이스 + `memory.md` 로 "기억 가진 에이전트" 구현.
-   - MCP 로 도구를 주입해 코딩/검색/파일 등 외부 액션 가능.
+   - **외부 MCP 서버를 client 로 연결**해 코딩/검색/파일 등 도구 실행을 위임. (MCP 서버는 떼었다 붙였다 가능한 외부 컴포넌트)
    - 어드민/사용량/세션 관측 → 운영 가능한 형태.
 
 3. **LiteLLM 이 분리된 이유**
@@ -242,13 +271,15 @@ flowchart LR
 ```mermaid
 flowchart LR
     A[Open WebUI] --> B[ChatDRAGON Pipe]
-    B --> C["Oh-My-Gateway<br/>📝 memory.md · 🔧 MCP · 🤖 Agent"]
+    B --> C["Oh-My-Gateway<br/>📝 memory.md · 🤖 Agent"]
+    C <-. MCP .-> X["🔌 External<br/>MCP Servers"]
     C --> D[LiteLLM Proxy]
     D --> E[(vLLM / SGLang LLMs)]
 
     style A fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
     style B fill:#BBDEFB,stroke:#1976D2,stroke-width:2px
     style C fill:#FFE0B2,stroke:#F57C00,stroke-width:2px
+    style X fill:#FFCDD2,stroke:#C62828,stroke-width:2px
     style D fill:#E1BEE7,stroke:#7B1FA2,stroke-width:2px
     style E fill:#C8E6C9,stroke:#388E3C,stroke-width:2px
 ```
@@ -261,6 +292,7 @@ flowchart LR
 |---|---|---|
 | Open WebUI (UI + Pipe 호스팅) | `Kyutinium/open-webui` | `pipelines_dev/chatdragon_responses.py` |
 | ChatDRAGON 정의/도큐 | `Kyutinium/ChatDRAGON` | — |
-| Gateway | `JinY0ung-Shin/oh-my-gateway` | `src/main.py` (`/v1/responses`) |
+| Gateway | `JinY0ung-Shin/oh-my-gateway` | `src/main.py` (`/v1/responses`), `src/mcp_config.py` |
 | OpenCode 백엔드 | `Kyutinium/opencode` | OpenCode CLI |
 | LiteLLM | `Kyutinium/litellm_serving` | `litellm_config.yaml` |
+| MCP Servers | (외부 — 각 도구별 구현) | stdio/http endpoints, gateway `MCP_CONFIG` 에 등록 |
