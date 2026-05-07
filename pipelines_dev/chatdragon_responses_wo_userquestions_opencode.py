@@ -993,7 +993,10 @@ class Pipeline:
                                     # shape-based and returns [] for tools that
                                     # don't have a search-result payload, so it
                                     # is safe to try every tool result here.
-                                    results = self._extract_tool_results_for_explorer(raw)
+                                    if self._hide_from_explorer(t_name):
+                                        results = []
+                                    else:
+                                        results = self._extract_tool_results_for_explorer(raw)
                                     if results:
                                         # Use the friendly label so the sidebar
                                         # shows e.g. "knowledge base" rather
@@ -1256,7 +1259,11 @@ class Pipeline:
                 chars = m.group(1) if m else "large"
                 result_content = f"Result truncated ({chars} chars)"
             result_content = result_content[:10000]
-            esc_name = html.escape(name)
+            # Friendly display name (e.g. "knowledge base", "document search
+            # MyDB") so the inline "View Result from **NAME**" UI is readable.
+            # Falls back to the raw name for tools without a registered label.
+            display_name = self._tool_label(name) or name
+            esc_name = html.escape(display_name)
 
             if self.valves.MCP_TOOL_ONLY and not name.startswith("mcp__"):
                 return None
@@ -1302,6 +1309,19 @@ class Pipeline:
         "google_drive": "Google Drive",
     }
 
+    # MCP server-prefix rules. Used when the tool key is dynamic (e.g. a
+    # per-DB suffix) and a static suffix→label map can't enumerate them.
+    # ``{tool}`` is replaced with everything after the server segment.
+    _MCP_SERVER_LABELS: dict[str, str] = {
+        "doc_retrieval": "document search {tool}",
+    }
+
+    # Tools whose results are too low-signal to surface in the right-sidebar
+    # Tool Explorer (e.g. glossary / common-knowledge lookups users already
+    # know).  Inline ``<details type="tool_calls">`` blocks are still
+    # rendered — only the explorer aggregation is suppressed.
+    _TOOL_EXPLORER_HIDE: set[str] = {"basic_knowledge"}
+
     # Built-in SDK tools → friendly display name.
     _BUILTIN_LABELS: dict[str, str] = {
         "read": "a file",
@@ -1337,29 +1357,66 @@ class Pipeline:
     ]
 
     @classmethod
+    def _hide_from_explorer(cls, raw_name: str) -> bool:
+        """Return True if a tool's results should be omitted from the
+        right-sidebar Tool Explorer (matches both ``mcp__<server>__…`` and
+        OpenCode-flattened ``<server>_…`` forms)."""
+        lower = raw_name.lower()
+        if lower.startswith("mcp__"):
+            parts = lower.split("__")
+            if len(parts) >= 2 and parts[1] in cls._TOOL_EXPLORER_HIDE:
+                return True
+        tokens = lower.split("_")
+        for hide_key in cls._TOOL_EXPLORER_HIDE:
+            key_tokens = hide_key.split("_")
+            n = len(key_tokens)
+            if len(tokens) >= n and tokens[:n] == key_tokens:
+                return True
+        return False
+
+    @classmethod
     def _tool_label(cls, raw_name: str) -> str:
         """Return a short, human-friendly label for a tool name.
 
-        Handles three name formats:
+        Handles three name formats with the same resolution priority:
           1. Built-in SDK tools (``read``, ``bash`` …) – exact match.
-          2. Native Claude MCP names ``mcp__<server>__<tool>`` – use the
-             trailing tool key.
-          3. OpenCode-flattened MCP names (``basic_knowledge_basic_knowledge``)
-             – scan for any known _MCP_LABELS key as a contiguous
-             ``_``-separated sub-token sequence.
+          2. Native Claude MCP names ``mcp__<server>__<tool>``:
+             a. Server-prefix template in ``_MCP_SERVER_LABELS`` (dynamic
+                tools like ``mcp__doc_retrieval__<dbname>``).
+             b. Exact tool-key match in ``_MCP_LABELS``.
+             c. Tool key with underscores replaced by spaces.
+          3. OpenCode-flattened MCP names (``<server>_<tool>`` joined with
+             a single underscore):
+             a. Server-prefix template – tokens prefix-match an
+                ``_MCP_SERVER_LABELS`` key, remainder is ``{tool}``.
+             b. Any ``_MCP_LABELS`` key matched as a contiguous sub-token
+                sequence anywhere in the flattened name.
+             c. Underscore-to-space fallback.
         """
         lower = raw_name.lower()
         if lower in cls._BUILTIN_LABELS:
             return cls._BUILTIN_LABELS[lower]
         if lower.startswith("mcp__"):
             parts = raw_name.split("__")
+            if len(parts) >= 3:
+                server = parts[1].lower()
+                tool = "__".join(parts[2:])
+                if server in cls._MCP_SERVER_LABELS:
+                    return cls._MCP_SERVER_LABELS[server].format(tool=tool)
             tool_key = parts[-1] if len(parts) >= 3 else parts[-1]
             if tool_key.lower() in cls._MCP_LABELS:
                 return cls._MCP_LABELS[tool_key.lower()]
             return tool_key.replace("_", " ")
-        # OpenCode flattens MCP names; look for a known label key as a
-        # contiguous sub-token sequence in the flattened name.
+        # OpenCode flattens MCP names; first try server-prefix templates,
+        # then fall back to known ``_MCP_LABELS`` sub-token matches.
         tokens = lower.split("_")
+        raw_tokens = raw_name.split("_")
+        for server_key, template in cls._MCP_SERVER_LABELS.items():
+            server_tokens = server_key.split("_")
+            n = len(server_tokens)
+            if len(tokens) > n and tokens[:n] == server_tokens:
+                tool = "_".join(raw_tokens[n:])
+                return template.format(tool=tool)
         for key, friendly in cls._MCP_LABELS.items():
             key_tokens = key.split("_")
             n = len(key_tokens)
