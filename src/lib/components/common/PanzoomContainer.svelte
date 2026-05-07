@@ -17,7 +17,11 @@
 	// (PhotoSwipe, Lightbox, macOS Preview): at fit-to-screen scale the image
 	// stays centered and only becomes draggable once it overflows the viewport.
 	const isNotZoomed = () => (instance?.getTransform().scale ?? 1) <= 1;
-	const lockMousePan = () => isNotZoomed();
+	const lockMousePan = () => {
+		const locked = isNotZoomed();
+		console.debug('[PanzoomContainer] beforeMouseDown locked=', locked, 'scale=', instance?.getTransform().scale);
+		return locked;
+	};
 	// Only block single-finger drags so that two-finger pinch zoom still works.
 	const lockTouchPan = (e: TouchEvent) => e.touches.length === 1 && isNotZoomed();
 
