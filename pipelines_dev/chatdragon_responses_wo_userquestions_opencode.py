@@ -139,6 +139,10 @@ class Pipeline:
             default=True,
             description="Inject instruction for model to output <response> tag when done thinking",
         )
+        MEMORY_REFERENCE_PROMPT: bool = Field(
+            default=True,
+            description="Inject instruction telling Claude to Read the workspace MEMORY.md first and reference it when planning searches and answering",
+        )
         TOOL_DISPLAY: bool = Field(
             default=True,
             description="Show detailed tool blocks with args and result; when off, show a short status line instead",
@@ -276,14 +280,17 @@ class Pipeline:
         return text
 
     def _get_thought_wrapped_instruction(self) -> str:
-        # NOTE: this variant intentionally drops the MEMORY.md update
+        # NOTE: this variant intentionally drops the MEMORY.md *update*
         # protocol section.  Without the AskUserQuestion card flow the
         # SDK auto-denies any ``Edit(.claude/MEMORY.md, …)`` call, so
         # asking the model to attempt one every turn would produce a
         # cycle of attempt → deny → ``MEMORY_SKIP`` noise without ever
         # actually persisting anything.  The ``<response>`` token rule
         # is preserved because that's how thought_wrapped mode locates
-        # the user-visible portion of the reply.
+        # the user-visible portion of the reply.  MEMORY.md *read*
+        # guidance is provided separately via
+        # :meth:`_get_memory_reference_instruction` (gated by the
+        # ``MEMORY_REFERENCE_PROMPT`` valve).
         return """
 
 ## 답변 작성 규칙
@@ -295,6 +302,19 @@ class Pipeline:
 - 검색/도구 없이 바로 답변하는 경우: 답변 시작 직전에 `<response>` 출력
 
 이 토큰 이후에 최종 답변을 작성한다."""
+
+    def _get_memory_reference_instruction(self) -> str:
+        return """
+
+## MEMORY.md 활용 (시작 시 필수)
+
+검색이나 답변 작성 전, 작업 디렉토리 루트의 `MEMORY.md` 를 **먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
+
+- 🔵 Procedural — 과거에 효과적이었던 검색 도구 조합 / 쿼리 패턴 / 안티패턴
+- 🟡 Semantic — 사용자 선호 (응답 형식, 상세도, 부서 컨텍스트 등)
+- 🟢 Episodic — 최근 사용자 컨텍스트 / 진행 중 주제
+
+이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. MEMORY.md 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
@@ -702,6 +722,8 @@ class Pipeline:
                         and not __task__
                     ):
                         content += self._get_thought_wrapped_instruction()
+                    if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
+                        content += self._get_memory_reference_instruction()
                     messages[i] = {**messages[i], "content": content}
                 elif isinstance(content, list):
                     # Multimodal content (e.g. image + text from VQA queries).
@@ -728,6 +750,8 @@ class Pipeline:
                             and not __task__
                         ):
                             text += self._get_thought_wrapped_instruction()
+                        if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
+                            text += self._get_memory_reference_instruction()
                         content = list(content)
                         content[last_text_idx] = {**content[last_text_idx], "text": text}
                     messages[i] = {**messages[i], "content": content}
