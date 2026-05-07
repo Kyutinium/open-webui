@@ -995,13 +995,11 @@ class Pipeline:
                                     # is safe to try every tool result here.
                                     results = self._extract_tool_results_for_explorer(raw)
                                     if results:
-                                        if t_name.startswith("mcp__"):
-                                            parts = t_name.split("__")
-                                            label = parts[1] if len(parts) >= 2 else t_name
-                                        else:
-                                            # OpenCode/non-MCP tool: use the
-                                            # raw name as the sidebar label.
-                                            label = t_name or "tool"
+                                        # Use the friendly label so the sidebar
+                                        # shows e.g. "knowledge base" rather
+                                        # than ``mcp__basic_knowledge__…`` or
+                                        # ``basic_knowledge_basic_knowledge``.
+                                        label = self._tool_label(t_name) or t_name or "tool"
                                         # Get query from args
                                         orig_args = persisted_match["args"] if persisted_match else ""
                                         pending = tool_pending.get(tool_id, {})
@@ -1340,7 +1338,16 @@ class Pipeline:
 
     @classmethod
     def _tool_label(cls, raw_name: str) -> str:
-        """Return a short, human-friendly label for a tool name."""
+        """Return a short, human-friendly label for a tool name.
+
+        Handles three name formats:
+          1. Built-in SDK tools (``read``, ``bash`` …) – exact match.
+          2. Native Claude MCP names ``mcp__<server>__<tool>`` – use the
+             trailing tool key.
+          3. OpenCode-flattened MCP names (``basic_knowledge_basic_knowledge``)
+             – scan for any known _MCP_LABELS key as a contiguous
+             ``_``-separated sub-token sequence.
+        """
         lower = raw_name.lower()
         if lower in cls._BUILTIN_LABELS:
             return cls._BUILTIN_LABELS[lower]
@@ -1350,7 +1357,16 @@ class Pipeline:
             if tool_key.lower() in cls._MCP_LABELS:
                 return cls._MCP_LABELS[tool_key.lower()]
             return tool_key.replace("_", " ")
-        return raw_name
+        # OpenCode flattens MCP names; look for a known label key as a
+        # contiguous sub-token sequence in the flattened name.
+        tokens = lower.split("_")
+        for key, friendly in cls._MCP_LABELS.items():
+            key_tokens = key.split("_")
+            n = len(key_tokens)
+            for i in range(len(tokens) - n + 1):
+                if tokens[i : i + n] == key_tokens:
+                    return friendly
+        return raw_name.replace("_", " ")
 
     @classmethod
     def _friendly_tool_notification(cls, raw_name: str, is_error: bool = False) -> str:

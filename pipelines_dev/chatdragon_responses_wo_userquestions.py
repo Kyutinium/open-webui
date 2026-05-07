@@ -974,8 +974,11 @@ class Pipeline:
                                     if t_name.startswith("mcp__"):
                                         results = self._extract_tool_results_for_explorer(raw)
                                         if results:
-                                            parts = t_name.split("__")
-                                            label = parts[1] if len(parts) >= 2 else t_name
+                                            # Use the friendly label so the
+                                            # sidebar shows e.g. "knowledge
+                                            # base" rather than the raw MCP
+                                            # tool key.
+                                            label = self._tool_label(t_name) or t_name
                                             # Get query from args
                                             orig_args = persisted_match["args"] if persisted_match else ""
                                             pending = tool_pending.get(tool_id, {})
