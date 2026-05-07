@@ -985,58 +985,69 @@ class Pipeline:
                                     if thumbs:
                                         collected_thumbnails.extend(thumbs)
                                         log.info("[PIPE] collected %d thumbnails", len(thumbs))
-                                    # Structured results for tool explorer
-                                    if t_name.startswith("mcp__"):
-                                        results = self._extract_tool_results_for_explorer(raw)
-                                        if results:
+                                    # Structured results for tool explorer.
+                                    # OpenCode flattens MCP tool names (e.g.
+                                    # ``basic_knowledge_basic_knowledge``) so we
+                                    # can't gate on the ``mcp__`` prefix the
+                                    # native Claude SDK uses. The extractor is
+                                    # shape-based and returns [] for tools that
+                                    # don't have a search-result payload, so it
+                                    # is safe to try every tool result here.
+                                    results = self._extract_tool_results_for_explorer(raw)
+                                    if results:
+                                        if t_name.startswith("mcp__"):
                                             parts = t_name.split("__")
                                             label = parts[1] if len(parts) >= 2 else t_name
-                                            # Get query from args
-                                            orig_args = persisted_match["args"] if persisted_match else ""
-                                            pending = tool_pending.get(tool_id, {})
-                                            query = orig_args or pending.get("args", "{}")
-                                            try:
-                                                q_parsed = json.loads(query)
-                                                # Extract readable search query
-                                                query_str = ""
-                                                for v in q_parsed.values():
-                                                    if isinstance(v, str) and len(v) > 2:
-                                                        query_str = v
-                                                        break
-                                                if query_str:
-                                                    query = query_str
-                                                else:
-                                                    # No obvious string value; show key=value pairs
-                                                    pairs = [
-                                                        f"{k}={v}" for k, v in q_parsed.items()
-                                                        if isinstance(v, (str, int, float)) and str(v).strip()
-                                                    ]
-                                                    query = ", ".join(pairs) if pairs else query
-                                            except (json.JSONDecodeError, AttributeError):
-                                                pass
-                                            call_data = {
-                                                "query": query[:200],
-                                                "results": results,
-                                            }
-                                            # Track for dedup
-                                            if label not in tool_explorer_data:
-                                                tool_explorer_data[label] = []
-                                            tool_explorer_data[label].append(call_data)
-                                            # Emit immediately so sidebar updates live
-                                            explorer_tag = self._build_tool_explorer_tag(
-                                                {label: [call_data]}
-                                            )
-                                            if thought_wrapped and not response_tag_sent:
-                                                if text_buffer:
-                                                    yield text_buffer
-                                                    text_buffer = ""
-                                                yield explorer_tag
+                                        else:
+                                            # OpenCode/non-MCP tool: use the
+                                            # raw name as the sidebar label.
+                                            label = t_name or "tool"
+                                        # Get query from args
+                                        orig_args = persisted_match["args"] if persisted_match else ""
+                                        pending = tool_pending.get(tool_id, {})
+                                        query = orig_args or pending.get("args", "{}")
+                                        try:
+                                            q_parsed = json.loads(query)
+                                            # Extract readable search query
+                                            query_str = ""
+                                            for v in q_parsed.values():
+                                                if isinstance(v, str) and len(v) > 2:
+                                                    query_str = v
+                                                    break
+                                            if query_str:
+                                                query = query_str
                                             else:
-                                                yield explorer_tag
-                                            log.info(
-                                                "[PIPE] tool_explorer: %s +%d results (live)",
-                                                label, len(results),
-                                            )
+                                                # No obvious string value; show key=value pairs
+                                                pairs = [
+                                                    f"{k}={v}" for k, v in q_parsed.items()
+                                                    if isinstance(v, (str, int, float)) and str(v).strip()
+                                                ]
+                                                query = ", ".join(pairs) if pairs else query
+                                        except (json.JSONDecodeError, AttributeError):
+                                            pass
+                                        call_data = {
+                                            "query": query[:200],
+                                            "results": results,
+                                        }
+                                        # Track for dedup
+                                        if label not in tool_explorer_data:
+                                            tool_explorer_data[label] = []
+                                        tool_explorer_data[label].append(call_data)
+                                        # Emit immediately so sidebar updates live
+                                        explorer_tag = self._build_tool_explorer_tag(
+                                            {label: [call_data]}
+                                        )
+                                        if thought_wrapped and not response_tag_sent:
+                                            if text_buffer:
+                                                yield text_buffer
+                                                text_buffer = ""
+                                            yield explorer_tag
+                                        else:
+                                            yield explorer_tag
+                                        log.info(
+                                            "[PIPE] tool_explorer: %s +%d results (live)",
+                                            label, len(results),
+                                        )
                                     # (persisted_map entries auto-removed via .pop above)
                             rendered = self._render_system_event(
                                 event_type, sys_event, tool_names, tool_pending,
