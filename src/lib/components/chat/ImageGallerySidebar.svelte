@@ -204,8 +204,9 @@
 
 	function getImageUrl(imagePath: string): string {
 		if (!imagePath) return imagePath;
-		// Proxy HTTP URLs through backend to avoid Mixed Content on HTTPS pages
-		if (imagePath.startsWith('http://')) {
+		// Proxy external HTTP/HTTPS URLs through backend so corporate-network
+		// hosts unreachable from the browser can still be fetched server-side.
+		if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
 			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?u=${b64url(imagePath)}`;
 		}
 		return imagePath;

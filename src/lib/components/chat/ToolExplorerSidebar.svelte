@@ -12,10 +12,12 @@
 			.replace(/=+$/, '');
 	}
 
-	/** Proxy HTTP image URLs through backend to avoid Mixed Content errors */
+	/** Proxy external HTTP/HTTPS image URLs through backend.
+	 * Browser may not be able to reach internal image hosts directly
+	 * (corporate proxy), but the backend (with HTTP(S)_PROXY env) can. */
 	function proxyImageUrl(url: string): string {
 		if (!url) return url;
-		if (url.startsWith('http://')) {
+		if (url.startsWith('http://') || url.startsWith('https://')) {
 			return `${WEBUI_BASE_URL}/api/v1/image_proxy/fetch?u=${b64url(url)}`;
 		}
 		return url;
