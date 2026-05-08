@@ -86,6 +86,7 @@
 			: ((toolData?.[activeTab] || []).map((call) => ({ ...call, _tab: activeTab })));
 
 	// Group by turnId, preserving first-seen order. Calls without turnId fall under '__legacy__'.
+	// Turn number is assigned only to real turns, so legacy doesn't consume a number.
 	$: turnGroups = (() => {
 		const order: string[] = [];
 		const map: Record<string, any[]> = {};
@@ -97,12 +98,17 @@
 			}
 			map[tid].push(call);
 		}
-		return order.map((turnId, idx) => ({
-			turnId,
-			turnNumber: idx + 1,
-			calls: map[turnId],
-			isLegacy: turnId === '__legacy__'
-		}));
+		let realIdx = 0;
+		return order.map((turnId) => {
+			const isLegacy = turnId === '__legacy__';
+			if (!isLegacy) realIdx++;
+			return {
+				turnId,
+				turnNumber: isLegacy ? null : realIdx,
+				calls: map[turnId],
+				isLegacy
+			};
+		});
 	})();
 
 	$: latestTurnId = turnGroups.length > 0 ? turnGroups[turnGroups.length - 1].turnId : null;

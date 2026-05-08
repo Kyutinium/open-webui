@@ -489,11 +489,23 @@
 				<button
 					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
 					on:click={() => {
-						const tagged: Record<string, any[]> = {};
+						// Merge this message's calls into the existing store, preserving prior turns.
+						const existing = get(toolExplorerData) || {};
+						const next: Record<string, any[]> = { ...existing };
 						for (const [key, calls] of Object.entries(explorerData as Record<string, any[]>)) {
-							tagged[key] = (calls as any[]).map((c) => (messageId && !c.turnId ? { ...c, turnId: messageId } : c));
+							if (!next[key]) next[key] = [];
+							for (const raw of calls as any[]) {
+								const call = messageId && !raw.turnId ? { ...raw, turnId: messageId } : raw;
+								const isDup = next[key].some(
+									(c: any) =>
+										c.turnId === call.turnId &&
+										c.query === call.query &&
+										c.results?.length === call.results?.length
+								);
+								if (!isDup) next[key] = [...next[key], call];
+							}
 						}
-						toolExplorerData.set(tagged);
+						toolExplorerData.set(next);
 						showToolExplorer.set(true);
 					}}
 				>
