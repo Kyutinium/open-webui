@@ -124,6 +124,10 @@ class Pipeline:
             default=True,
             description="Inject instruction for model to output <response> tag when done thinking",
         )
+        MEMORY_REFERENCE_PROMPT: bool = Field(
+            default=True,
+            description="Inject instruction telling Claude to Read the workspace MEMORY.md first and reference it when planning searches and answering",
+        )
         TOOL_DISPLAY: bool = Field(
             default=True,
             description="Show detailed tool blocks with args and result; when off, show a short status line instead",
@@ -261,14 +265,17 @@ class Pipeline:
         return text
 
     def _get_thought_wrapped_instruction(self) -> str:
-        # NOTE: this variant intentionally drops the MEMORY.md update
+        # NOTE: this variant intentionally drops the MEMORY.md *update*
         # protocol section.  Without the AskUserQuestion card flow the
         # SDK auto-denies any ``Edit(.claude/MEMORY.md, …)`` call, so
         # asking the model to attempt one every turn would produce a
         # cycle of attempt → deny → ``MEMORY_SKIP`` noise without ever
         # actually persisting anything.  The ``<response>`` token rule
         # is preserved because that's how thought_wrapped mode locates
-        # the user-visible portion of the reply.
+        # the user-visible portion of the reply.  MEMORY.md *read*
+        # guidance is provided separately via
+        # :meth:`_get_memory_reference_instruction` (gated by the
+        # ``MEMORY_REFERENCE_PROMPT`` valve).
         return """
 
 ## 답변 작성 규칙
@@ -280,6 +287,19 @@ class Pipeline:
 - 검색/도구 없이 바로 답변하는 경우: 답변 시작 직전에 `<response>` 출력
 
 이 토큰 이후에 최종 답변을 작성한다."""
+
+    def _get_memory_reference_instruction(self) -> str:
+        return """
+
+## MEMORY.md 활용 (시작 시 필수)
+
+검색이나 답변 작성 전, 작업 디렉토리 루트의 `MEMORY.md` 를 **먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
+
+- 🔵 Procedural — 과거에 효과적이었던 검색 도구 조합 / 쿼리 패턴 / 안티패턴
+- 🟡 Semantic — 사용자 선호 (응답 형식, 상세도, 부서 컨텍스트 등)
+- 🟢 Episodic — 최근 사용자 컨텍스트 / 진행 중 주제
+
+이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. MEMORY.md 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
@@ -687,6 +707,8 @@ class Pipeline:
                         and not __task__
                     ):
                         content += self._get_thought_wrapped_instruction()
+                    if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
+                        content += self._get_memory_reference_instruction()
                     messages[i] = {**messages[i], "content": content}
                 elif isinstance(content, list):
                     # Multimodal content (e.g. image + text from VQA queries).
@@ -713,6 +735,8 @@ class Pipeline:
                             and not __task__
                         ):
                             text += self._get_thought_wrapped_instruction()
+                        if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
+                            text += self._get_memory_reference_instruction()
                         content = list(content)
                         content[last_text_idx] = {**content[last_text_idx], "text": text}
                     messages[i] = {**messages[i], "content": content}
@@ -971,11 +995,14 @@ class Pipeline:
                                         collected_thumbnails.extend(thumbs)
                                         log.info("[PIPE] collected %d thumbnails", len(thumbs))
                                     # Structured results for tool explorer
-                                    if t_name.startswith("mcp__"):
+                                    if t_name.startswith("mcp__") and not self._hide_from_explorer(t_name):
                                         results = self._extract_tool_results_for_explorer(raw)
                                         if results:
-                                            parts = t_name.split("__")
-                                            label = parts[1] if len(parts) >= 2 else t_name
+                                            # Use the friendly label so the
+                                            # sidebar shows e.g. "knowledge
+                                            # base" rather than the raw MCP
+                                            # tool key.
+                                            label = self._tool_label(t_name) or t_name
                                             # Get query from args
                                             orig_args = persisted_match["args"] if persisted_match else ""
                                             pending = tool_pending.get(tool_id, {})
@@ -1232,7 +1259,11 @@ class Pipeline:
                 chars = m.group(1) if m else "large"
                 result_content = f"Result truncated ({chars} chars)"
             result_content = result_content[:10000]
-            esc_name = html.escape(name)
+            # Friendly display name (e.g. "knowledge base", "document search
+            # MyDB") so the inline "View Result from **NAME**" UI is readable.
+            # Falls back to the raw name for tools without a registered label.
+            display_name = self._tool_label(name) or name
+            esc_name = html.escape(display_name)
 
             if self.valves.MCP_TOOL_ONLY and not name.startswith("mcp__"):
                 return None
@@ -1278,6 +1309,19 @@ class Pipeline:
         "google_drive": "Google Drive",
     }
 
+    # MCP server-prefix rules. Used when the tool key is dynamic (e.g. a
+    # per-DB suffix) and a static suffix→label map can't enumerate them.
+    # ``{tool}`` is replaced with everything after the server segment.
+    _MCP_SERVER_LABELS: dict[str, str] = {
+        "doc_retrieval": "document search {tool}",
+    }
+
+    # Tools whose results are too low-signal to surface in the right-sidebar
+    # Tool Explorer (e.g. glossary / common-knowledge lookups users already
+    # know).  Inline ``<details type="tool_calls">`` blocks are still
+    # rendered — only the explorer aggregation is suppressed.
+    _TOOL_EXPLORER_HIDE: set[str] = {"basic_knowledge"}
+
     # Built-in SDK tools → friendly display name.
     _BUILTIN_LABELS: dict[str, str] = {
         "read": "a file",
@@ -1313,13 +1357,43 @@ class Pipeline:
     ]
 
     @classmethod
+    def _hide_from_explorer(cls, raw_name: str) -> bool:
+        """Return True if a tool's results should be omitted from the
+        right-sidebar Tool Explorer (matches both ``mcp__<server>__…`` and
+        OpenCode-flattened ``<server>_…`` forms)."""
+        lower = raw_name.lower()
+        if lower.startswith("mcp__"):
+            parts = lower.split("__")
+            if len(parts) >= 2 and parts[1] in cls._TOOL_EXPLORER_HIDE:
+                return True
+        tokens = lower.split("_")
+        for hide_key in cls._TOOL_EXPLORER_HIDE:
+            key_tokens = hide_key.split("_")
+            n = len(key_tokens)
+            if len(tokens) >= n and tokens[:n] == key_tokens:
+                return True
+        return False
+
+    @classmethod
     def _tool_label(cls, raw_name: str) -> str:
-        """Return a short, human-friendly label for a tool name."""
+        """Return a short, human-friendly label for a tool name.
+
+        Resolution order for ``mcp__<server>__<tool>`` names:
+          1. Server-prefix template in ``_MCP_SERVER_LABELS`` (dynamic tools
+             like ``mcp__doc_retrieval__<dbname>`` → ``document search <dbname>``).
+          2. Exact tool-key match in ``_MCP_LABELS``.
+          3. Tool key with underscores replaced by spaces.
+        """
         lower = raw_name.lower()
         if lower in cls._BUILTIN_LABELS:
             return cls._BUILTIN_LABELS[lower]
         if lower.startswith("mcp__"):
             parts = raw_name.split("__")
+            if len(parts) >= 3:
+                server = parts[1].lower()
+                tool = "__".join(parts[2:])
+                if server in cls._MCP_SERVER_LABELS:
+                    return cls._MCP_SERVER_LABELS[server].format(tool=tool)
             tool_key = parts[-1] if len(parts) >= 3 else parts[-1]
             if tool_key.lower() in cls._MCP_LABELS:
                 return cls._MCP_LABELS[tool_key.lower()]

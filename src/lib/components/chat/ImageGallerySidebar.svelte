@@ -241,12 +241,16 @@
 			instance = null;
 		}
 		if (sceneElement) {
+			// Lock panning until the user has zoomed in past 1x. Matches PhotoSwipe /
+			// Lightbox / macOS Preview behavior: at fit-to-screen the image stays
+			// centered and only becomes draggable once it overflows the viewport.
 			instance = panzoom(sceneElement, {
 				bounds: true,
 				boundsPadding: 0.1,
 				zoomSpeed: 0.065,
 				maxZoom: 10,
-				minZoom: 0.1
+				minZoom: 0.1,
+				beforeMouseDown: () => (instance?.getTransform().scale ?? 1) <= 1
 			});
 		}
 	}

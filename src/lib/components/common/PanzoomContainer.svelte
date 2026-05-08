@@ -2,12 +2,6 @@
 	import { onMount } from 'svelte';
 	import panzoom, { type PanZoom, type PanZoomOptions } from 'panzoom';
 
-	const defaultOpts: PanZoomOptions = {
-		bounds: true,
-		boundsPadding: 0.1,
-		zoomSpeed: 0.065
-	};
-
 	export let className = '';
 	export let options: Partial<PanZoomOptions> = {};
 
@@ -19,7 +13,18 @@
 		instance?.zoomAbs(0, 0, 1);
 	};
 
+	// Lock panning until the user has zoomed in. Standard image-viewer behavior
+	// (PhotoSwipe, Lightbox, macOS Preview): at fit-to-screen scale the image
+	// stays centered and only becomes draggable once it overflows the viewport.
+	const lockMousePan = () => (instance?.getTransform().scale ?? 1) <= 1;
+
 	onMount(() => {
+		const defaultOpts: PanZoomOptions = {
+			bounds: true,
+			boundsPadding: 0.1,
+			zoomSpeed: 0.065,
+			beforeMouseDown: lockMousePan
+		};
 		const localInstance = panzoom(containerElement, { ...defaultOpts, ...options });
 		instance = localInstance;
 		return () => {
