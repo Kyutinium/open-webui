@@ -141,11 +141,11 @@ class Pipeline:
         )
         MEMORY_REFERENCE_PROMPT: bool = Field(
             default=True,
-            description="Inject instruction telling Claude to Read the workspace MEMORY.md first and reference it when planning searches and answering",
+            description="Inject instruction telling Claude to Read user-level MEMORY.md (/tmp/workspaces/<MLM_USERNAME>/MEMORY.md) first and reference it when planning searches and answering. Shared across backends.",
         )
         MEMORY_UPDATE_PROMPT: bool = Field(
             default=True,
-            description="Inject instruction telling Claude to update ./MEMORY.md (workspace cwd, NOT .claude/) before each final answer when admission criteria are met. Disable for read-only memory mode.",
+            description="Inject instruction telling Claude to update /tmp/workspaces/<MLM_USERNAME>/MEMORY.md (user-level, NOT pwd-local, NOT .claude/) before each final answer when admission criteria are met. Disable for read-only memory mode.",
         )
         TOOL_DISPLAY: bool = Field(
             default=True,
@@ -308,11 +308,14 @@ class Pipeline:
 
 ## MEMORY.md 활용 (시작 시 필수)
 
-검색이나 답변 작성 전, **`./MEMORY.md` (현재 working directory, pwd) 를 먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
+MEMORY.md 는 **user-level 파일**이다 — backend (claude / codex / opencode) 와 무관하게 같은 사용자에 묶이므로 per-backend cwd 가 아닌 사용자 디렉토리에 저장된다.
+
+검색이나 답변 작성 전, **`/tmp/workspaces/<MLM_USERNAME>/MEMORY.md` 를 Read** (또는 `../MEMORY.md` 동치) 해서 다음을 확인하고 이번 턴에 반영한다:
 
 **경로 규칙 (반드시 준수)**:
-- ✅ **정확**: `./MEMORY.md` — pwd 기준. 예: pwd 가 `/tmp/workspaces/<user>/<backend>` 이면 `/tmp/workspaces/<user>/<backend>/MEMORY.md`.
-- ❌ **금지**: `../MEMORY.md`, parent directory, 또는 `/tmp/workspaces/<user>/MEMORY.md` 같은 상위 경로 — 이번 세션의 MEMORY.md 가 아님.
+- ✅ **정확**: `/tmp/workspaces/<MLM_USERNAME>/MEMORY.md` — 절대경로, user-level. `<MLM_USERNAME>` 은 시스템 프롬프트의 `<mlm_username>...</mlm_username>` 태그값으로 치환.
+- ✅ **동등 표현**: `../MEMORY.md` — pwd 의 parent. 같은 파일.
+- ❌ **금지**: `./MEMORY.md` 또는 `<pwd>/MEMORY.md` — 이건 backend-local 위치라 claude / codex / opencode 사이에 분리됨. user-level personalization 의 의도와 어긋남.
 - ❌ **금지**: `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 — Claude Code sensitive-file rule 차단.
 
 확인할 항목:
@@ -320,7 +323,7 @@ class Pipeline:
 - 🟡 Semantic — 사용자 선호 (응답 형식, 상세도, 부서 컨텍스트 등)
 - 🟢 Episodic — 최근 사용자 컨텍스트 / 진행 중 주제
 
-이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. `./MEMORY.md` 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
+이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. MEMORY.md 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
 
     def _get_memory_update_instruction(self) -> str:
         return """
@@ -333,12 +336,13 @@ class Pipeline:
    (Admission 기준: future utility + observation ≥2회 + 기존 항목과 non-duplicate, 모두 Yes 일 때만)
 
 2. **업데이트 필요 시** — 먼저 Edit 도구로 실제 파일 수정:
-   `Edit(file_path="./MEMORY.md", old_string="...", new_string="...")`
+   `Edit(file_path="/tmp/workspaces/<MLM_USERNAME>/MEMORY.md", old_string="...", new_string="...")`
 
    **경로 규칙 (반드시 준수)**:
-   - ✅ `./MEMORY.md` — 현재 working directory (pwd) 의 MEMORY.md
-   - ❌ `../MEMORY.md` 또는 parent directory 의 MEMORY.md (다른 세션과 격리되어야 함)
-   - ❌ `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 (Claude Code sensitive-file rule 차단)
+   - ✅ `/tmp/workspaces/<MLM_USERNAME>/MEMORY.md` — 절대경로 (user-level). `<MLM_USERNAME>` 은 `<mlm_username>` 태그값.
+   - ✅ `../MEMORY.md` — pwd parent, 동등 표현.
+   - ❌ `./MEMORY.md` — backend-local 이라 backend 간 분리. user 메모리 의도와 어긋남.
+   - ❌ `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 — sensitive-file rule 차단.
 
 3. Edit 도구의 성공 반환 (예: "File updated") 을 **확인한 직후**, 마커 출력:
    `MEMORY_UPDATE: <방금 추가한 entry 한 줄 요약>`
