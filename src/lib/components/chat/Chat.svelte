@@ -641,7 +641,22 @@
 						} catch {}
 					}
 					if (Object.keys(merged).length > 0) {
-						toolExplorerData.set(merged);
+						// Merge with existing store data so prior turns are preserved.
+						const existing = get(toolExplorerData) || {};
+						const next: Record<string, any[]> = { ...existing };
+						for (const [key, calls] of Object.entries(merged)) {
+							if (!next[key]) next[key] = [];
+							for (const call of calls) {
+								const isDup = next[key].some(
+									(c: any) =>
+										c.turnId === call.turnId &&
+										c.query === call.query &&
+										c.results?.length === call.results?.length
+								);
+								if (!isDup) next[key] = [...next[key], call];
+							}
+						}
+						toolExplorerData.set(next);
 						showToolExplorer.set(true);
 						if (!message._controlsOpened) {
 							message._controlsOpened = true;
