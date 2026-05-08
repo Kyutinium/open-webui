@@ -492,11 +492,29 @@
 			})()}
 			{#if explorerData}
 				<button
-					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
+					class="flex items-center gap-1.5 px-2.5 py-1 my-0.5 rounded border border-blue-500/70 dark:border-blue-400/70 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition text-[11px] font-medium text-blue-600 dark:text-blue-400"
 					on:click={() => {
-						// Tool results are already accumulated in the store via the
-						// streaming auto-push paths. The button just reopens the
-						// sidebar so the user can browse all turns.
+						// Ensure this message's calls are in the store (some messages
+						// only emit search_results_button without a streaming
+						// tool_explorer block, so the auto-push path may not have
+						// populated them). Merge with existing data so prior turns
+						// are preserved; dedup means repeated clicks are no-ops.
+						const existing = get(toolExplorerData) || {};
+						const next: Record<string, any[]> = { ...existing };
+						for (const [key, calls] of Object.entries(explorerData as Record<string, any[]>)) {
+							if (!next[key]) next[key] = [];
+							for (const raw of calls as any[]) {
+								const call = messageId && !raw.turnId ? { ...raw, turnId: messageId } : raw;
+								const isDup = next[key].some(
+									(c: any) =>
+										c.turnId === call.turnId &&
+										c.query === call.query &&
+										c.results?.length === call.results?.length
+								);
+								if (!isDup) next[key] = [...next[key], call];
+							}
+						}
+						toolExplorerData.set(next);
 						showToolExplorer.set(true);
 					}}
 				>

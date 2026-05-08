@@ -1506,6 +1506,51 @@
 
 				await tick();
 
+				// Populate tool explorer with all turns from saved messages so the
+				// sidebar is fully built before the user expands any reasoning
+				// collapsibles (which would otherwise be the only trigger that
+				// mounts autoOpenToolExplorer for nested tool_explorer details).
+				if (!$mobile && history?.messages) {
+					const next: Record<string, any[]> = {};
+					for (const msg of Object.values(history.messages) as any[]) {
+						if (!msg?.content || msg.role !== 'assistant') continue;
+						let contentToParse = msg.content;
+						if (contentToParse.includes('&lt;details')) {
+							contentToParse = contentToParse
+								.replaceAll('&lt;', '<')
+								.replaceAll('&gt;', '>')
+								.replaceAll('&quot;', '"')
+								.replaceAll('&amp;', '&');
+						}
+						contentToParse = contentToParse.replace(/^> /gm, '');
+						const matches = contentToParse.matchAll(
+							/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
+						);
+						const turnId = msg.id;
+						for (const m of matches) {
+							try {
+								const data = JSON.parse(m[1].replace(/^> /gm, '').trim());
+								for (const [key, val] of Object.entries(data)) {
+									if (!next[key]) next[key] = [];
+									for (const raw of val as any[]) {
+										const call = turnId && !raw.turnId ? { ...raw, turnId } : raw;
+										const isDup = next[key].some(
+											(c: any) =>
+												c.turnId === call.turnId &&
+												c.query === call.query &&
+												c.results?.length === call.results?.length
+										);
+										if (!isDup) next[key].push(call);
+									}
+								}
+							} catch {}
+						}
+					}
+					if (Object.keys(next).length > 0) {
+						toolExplorerData.set(next);
+					}
+				}
+
 				return true;
 			} else {
 				return null;
