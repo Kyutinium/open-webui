@@ -827,7 +827,8 @@
 				showEmbeds.set(false);
 				showImageGallery.set(false);
 				showToolExplorer.set(false);
-				toolExplorerData.set(null);
+				// Keep toolExplorerData: closing the panel should hide UI but
+				// preserve accumulated tool results across the chat session.
 			}
 		});
 

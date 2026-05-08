@@ -316,6 +316,7 @@
 			<blockquote dir="auto">
 				<svelte:self
 					id={`${id}-${tokenIdx}`}
+					{messageId}
 					tokens={token.tokens}
 					{done}
 					{editCodeBlock}
@@ -350,6 +351,7 @@
 
 						<svelte:self
 							id={`${id}-${tokenIdx}-${itemIdx}`}
+							{messageId}
 							tokens={item.tokens}
 							top={token.loose}
 							{done}
@@ -385,6 +387,7 @@
 							<div>
 								<svelte:self
 									id={`${id}-${tokenIdx}-${itemIdx}`}
+									{messageId}
 									tokens={item.tokens}
 									top={token.loose}
 									{done}
@@ -397,6 +400,7 @@
 						{:else}
 							<svelte:self
 								id={`${id}-${tokenIdx}-${itemIdx}`}
+								{messageId}
 								tokens={item.tokens}
 								top={token.loose}
 								{done}
@@ -441,6 +445,7 @@
 							<div class="mb-1.5" slot="content">
 								<svelte:self
 									id={`${id}-${tokenIdx}-${detailIdx}-d`}
+									{messageId}
 									tokens={marked.lexer(decode(detailToken.text))}
 									attributes={detailToken?.attributes}
 									{done}
@@ -489,23 +494,9 @@
 				<button
 					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
 					on:click={() => {
-						// Merge this message's calls into the existing store, preserving prior turns.
-						const existing = get(toolExplorerData) || {};
-						const next: Record<string, any[]> = { ...existing };
-						for (const [key, calls] of Object.entries(explorerData as Record<string, any[]>)) {
-							if (!next[key]) next[key] = [];
-							for (const raw of calls as any[]) {
-								const call = messageId && !raw.turnId ? { ...raw, turnId: messageId } : raw;
-								const isDup = next[key].some(
-									(c: any) =>
-										c.turnId === call.turnId &&
-										c.query === call.query &&
-										c.results?.length === call.results?.length
-								);
-								if (!isDup) next[key] = [...next[key], call];
-							}
-						}
-						toolExplorerData.set(next);
+						// Tool results are already accumulated in the store via the
+						// streaming auto-push paths. The button just reopens the
+						// sidebar so the user can browse all turns.
 						showToolExplorer.set(true);
 					}}
 				>
@@ -557,6 +548,7 @@
 				<div class=" mb-1.5" slot="content">
 					<svelte:self
 						id={`${id}-${tokenIdx}-d`}
+						{messageId}
 						tokens={marked.lexer(decode(token.text))}
 						attributes={token?.attributes}
 						{done}
