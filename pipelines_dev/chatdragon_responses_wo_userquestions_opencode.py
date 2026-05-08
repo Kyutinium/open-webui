@@ -143,6 +143,10 @@ class Pipeline:
             default=True,
             description="Inject instruction telling Claude to Read the workspace MEMORY.md first and reference it when planning searches and answering",
         )
+        MEMORY_UPDATE_PROMPT: bool = Field(
+            default=True,
+            description="Inject instruction telling Claude to update ./MEMORY.md (workspace cwd, NOT .claude/) before each final answer when admission criteria are met. Disable for read-only memory mode.",
+        )
         TOOL_DISPLAY: bool = Field(
             default=True,
             description="Show detailed tool blocks with args and result; when off, show a short status line instead",
@@ -280,17 +284,13 @@ class Pipeline:
         return text
 
     def _get_thought_wrapped_instruction(self) -> str:
-        # NOTE: this variant intentionally drops the MEMORY.md *update*
-        # protocol section.  Without the AskUserQuestion card flow the
-        # SDK auto-denies any ``Edit(.claude/MEMORY.md, …)`` call, so
-        # asking the model to attempt one every turn would produce a
-        # cycle of attempt → deny → ``MEMORY_SKIP`` noise without ever
-        # actually persisting anything.  The ``<response>`` token rule
-        # is preserved because that's how thought_wrapped mode locates
-        # the user-visible portion of the reply.  MEMORY.md *read*
-        # guidance is provided separately via
-        # :meth:`_get_memory_reference_instruction` (gated by the
-        # ``MEMORY_REFERENCE_PROMPT`` valve).
+        # The ``<response>`` token rule is preserved because that's how
+        # thought_wrapped mode locates the user-visible portion of the
+        # reply.  MEMORY.md *read* and *update* guidance live in their
+        # own helpers — see :meth:`_get_memory_reference_instruction`
+        # (``MEMORY_REFERENCE_PROMPT`` valve) and
+        # :meth:`_get_memory_update_instruction`
+        # (``MEMORY_UPDATE_PROMPT`` valve).
         return """
 
 ## 답변 작성 규칙
@@ -308,13 +308,57 @@ class Pipeline:
 
 ## MEMORY.md 활용 (시작 시 필수)
 
-검색이나 답변 작성 전, 작업 디렉토리 루트의 `MEMORY.md` 를 **먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
+검색이나 답변 작성 전, **`./MEMORY.md` (현재 working directory, pwd) 를 먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
 
+**경로 규칙 (반드시 준수)**:
+- ✅ **정확**: `./MEMORY.md` — pwd 기준. 예: pwd 가 `/tmp/workspaces/<user>/<backend>` 이면 `/tmp/workspaces/<user>/<backend>/MEMORY.md`.
+- ❌ **금지**: `../MEMORY.md`, parent directory, 또는 `/tmp/workspaces/<user>/MEMORY.md` 같은 상위 경로 — 이번 세션의 MEMORY.md 가 아님.
+- ❌ **금지**: `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 — Claude Code sensitive-file rule 차단.
+
+확인할 항목:
 - 🔵 Procedural — 과거에 효과적이었던 검색 도구 조합 / 쿼리 패턴 / 안티패턴
 - 🟡 Semantic — 사용자 선호 (응답 형식, 상세도, 부서 컨텍스트 등)
 - 🟢 Episodic — 최근 사용자 컨텍스트 / 진행 중 주제
 
-이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. MEMORY.md 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
+이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. `./MEMORY.md` 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
+
+    def _get_memory_update_instruction(self) -> str:
+        return """
+
+## MEMORY.md 업데이트 프로토콜 (필수 순서)
+
+답변 작성 직전, 아래 시퀀스를 **이 순서대로** 실행한다:
+
+1. **판단** — 이번 턴에 MEMORY.md 에 추가할 새 entry 가 있는가?
+   (Admission 기준: future utility + observation ≥2회 + 기존 항목과 non-duplicate, 모두 Yes 일 때만)
+
+2. **업데이트 필요 시** — 먼저 Edit 도구로 실제 파일 수정:
+   `Edit(file_path="./MEMORY.md", old_string="...", new_string="...")`
+
+   **경로 규칙 (반드시 준수)**:
+   - ✅ `./MEMORY.md` — 현재 working directory (pwd) 의 MEMORY.md
+   - ❌ `../MEMORY.md` 또는 parent directory 의 MEMORY.md (다른 세션과 격리되어야 함)
+   - ❌ `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 (Claude Code sensitive-file rule 차단)
+
+3. Edit 도구의 성공 반환 (예: "File updated") 을 **확인한 직후**, 마커 출력:
+   `MEMORY_UPDATE: <방금 추가한 entry 한 줄 요약>`
+
+4. **업데이트 불필요 시**: `MEMORY_SKIP: <사유>` 출력
+   (사유 예시: "novelty 미달" / "observation <2회" / "기존 항목과 중복" / "update 불필요")
+
+5. 마지막으로 `<response>` 토큰 출력.
+
+**금지 규칙**: Edit 도구 호출이 선행되지 않았다면 `MEMORY_UPDATE` 를 적지 마라.
+Edit 없이 `MEMORY_UPDATE` 를 출력하는 것은 **false reporting** 이며 protocol violation 이다.
+
+출력 예 (업데이트 수행 시):
+```
+[Edit 도구 호출 → "File updated" 결과 확인됨]
+MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
+<response>
+```
+
+이 마커 라인은 `<thought>` collapsible 안에 남고 최종 사용자 응답에는 표시되지 않는다."""
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
@@ -724,6 +768,8 @@ class Pipeline:
                         content += self._get_thought_wrapped_instruction()
                     if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
                         content += self._get_memory_reference_instruction()
+                    if self.valves.MEMORY_UPDATE_PROMPT and not __task__:
+                        content += self._get_memory_update_instruction()
                     messages[i] = {**messages[i], "content": content}
                 elif isinstance(content, list):
                     # Multimodal content (e.g. image + text from VQA queries).
@@ -752,6 +798,8 @@ class Pipeline:
                             text += self._get_thought_wrapped_instruction()
                         if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
                             text += self._get_memory_reference_instruction()
+                        if self.valves.MEMORY_UPDATE_PROMPT and not __task__:
+                            text += self._get_memory_update_instruction()
                         content = list(content)
                         content[last_text_idx] = {**content[last_text_idx], "text": text}
                     messages[i] = {**messages[i], "content": content}
