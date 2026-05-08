@@ -628,12 +628,15 @@
 						/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
 					);
 					let merged: Record<string, any[]> = {};
+					const turnId = event.message_id;
 					for (const m of explorerMatches) {
 						try {
 							const data = JSON.parse(m[1].replace(/^> /gm, '').trim());
 							for (const [key, val] of Object.entries(data)) {
 								if (!merged[key]) merged[key] = [];
-								merged[key].push(...(val as any[]));
+								for (const call of val as any[]) {
+									merged[key].push(turnId && !call.turnId ? { ...call, turnId } : call);
+								}
 							}
 						} catch {}
 					}

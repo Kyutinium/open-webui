@@ -23,7 +23,7 @@
 
 	const i18n = getContext('i18n');
 
-	export let toolData: Record<string, Array<{ query: string; results: Array<{
+	export let toolData: Record<string, Array<{ turnId?: string; query: string; results: Array<{
 		title: string;
 		content: string;
 		url: string;
@@ -45,19 +45,22 @@
 		return (toolData?.[tab] || []).reduce((sum, call) => sum + (call?.results?.length || 0), 0);
 	}
 
-	// All calls across all tabs (for 'all' tab)
+	// All calls across all tabs (for 'all' tab) — preserve insertion order with _tab tag
 	$: allCalls = Object.entries(toolData || {}).flatMap(([tab, calls]) =>
 		(calls || []).map((call) => ({ ...call, _tab: tab }))
 	);
 
-	// Current calls based on active tab
-	$: currentCalls = activeTab === 'all' ? allCalls : (toolData?.[activeTab] || []);
-
-	// Expand/collapse state for each query
+	// Per-call expand state (existing query-level toggle)
 	let expandedQueries: Record<string, boolean> = {};
-
 	function toggleQuery(key: string) {
 		expandedQueries[key] = !expandedQueries[key];
+	}
+
+	// Per-turn explicit expand override. When undefined, fall back to "latest only" default.
+	let turnExpandOverrides: Record<string, boolean> = {};
+	function toggleTurn(turnId: string, isLatest: boolean) {
+		const current = isTurnExpanded(turnId, isLatest);
+		turnExpandOverrides[turnId] = !current;
 	}
 
 	// Search: searches across ALL tabs regardless of active tab
@@ -65,8 +68,8 @@
 	$: isSearching = searchQuery.trim().length > 0;
 	$: searchLower = searchQuery.toLowerCase();
 
-	// When searching: filter across all calls; when not: use current tab
-	$: filteredCalls = isSearching
+	// Calls feeding into rendering, before grouping
+	$: baseCalls = isSearching
 		? allCalls.map((call) => ({
 				...call,
 				results: (call.results || []).filter(
@@ -78,9 +81,40 @@
 			})).filter((call) => call.results.length > 0)
 		: activeTab === 'all'
 			? allCalls
-			: (toolData?.[activeTab] || []);
+			: ((toolData?.[activeTab] || []).map((call) => ({ ...call, _tab: activeTab })));
 
-	$: totalFiltered = filteredCalls.reduce((sum, call) => sum + (call?.results?.length || 0), 0);
+	// Group by turnId, preserving first-seen order. Calls without turnId fall under '__legacy__'.
+	$: turnGroups = (() => {
+		const order: string[] = [];
+		const map: Record<string, any[]> = {};
+		for (const call of baseCalls) {
+			const tid = call.turnId || '__legacy__';
+			if (!(tid in map)) {
+				map[tid] = [];
+				order.push(tid);
+			}
+			map[tid].push(call);
+		}
+		return order.map((turnId, idx) => ({
+			turnId,
+			turnNumber: idx + 1,
+			calls: map[turnId],
+			isLegacy: turnId === '__legacy__'
+		}));
+	})();
+
+	$: latestTurnId = turnGroups.length > 0 ? turnGroups[turnGroups.length - 1].turnId : null;
+
+	// Render order: newest turn at top, internal calls in original order
+	$: renderTurns = [...turnGroups].reverse();
+
+	function isTurnExpanded(turnId: string, isLatest: boolean): boolean {
+		if (isSearching) return true;
+		if (turnId in turnExpandOverrides) return turnExpandOverrides[turnId];
+		return isLatest;
+	}
+
+	$: totalFiltered = baseCalls.reduce((sum, call) => sum + (call?.results?.length || 0), 0);
 
 	function openThumbnail(thumbnail: string) {
 		if (!thumbnail) return;
@@ -170,15 +204,46 @@
 
 	<!-- Results -->
 	<div class="flex-1 overflow-y-auto scrollbar-hidden">
-		{#if filteredCalls.length === 0}
+		{#if totalFiltered === 0}
 			<div class="flex items-center justify-center h-24 text-xs text-gray-400">
 				{isSearching ? $i18n.t('No matching results') : $i18n.t('No results')}
 			</div>
 		{:else}
-			{#each filteredCalls as call, callIdx}
-				{@const queryKey = `${call._tab || activeTab}-${callIdx}`}
-				{@const isExpanded = isSearching || expandedQueries[queryKey] !== false}
-				<!-- Query row -->
+			{#each renderTurns as turn (turn.turnId)}
+				{@const isLatest = turn.turnId === latestTurnId}
+				{@const turnExpanded = isSearching
+					? true
+					: turn.turnId in turnExpandOverrides
+						? turnExpandOverrides[turn.turnId]
+						: isLatest}
+				{@const turnCallCount = turn.calls.reduce((s, c) => s + (c?.results?.length || 0), 0)}
+				<!-- Turn header -->
+				<button
+					class="w-full flex items-center gap-2 px-3 py-1.5 text-left bg-gray-50/70 dark:bg-gray-800/40 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 transition sticky top-0 z-10"
+					on:click={() => toggleTurn(turn.turnId, isLatest)}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 20 20"
+						fill="currentColor"
+						class="size-3 shrink-0 text-gray-400 transition-transform {turnExpanded ? 'rotate-90' : ''}"
+					>
+						<path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+					</svg>
+					<span class="flex-1 text-[11px] font-semibold text-gray-600 dark:text-gray-300 truncate">
+						{turn.isLegacy ? $i18n.t('Earlier') : `${$i18n.t('Turn')} ${turn.turnNumber}`}
+						{#if isLatest && !turn.isLegacy}
+							<span class="ml-1 text-[9px] font-normal text-blue-500 dark:text-blue-400">({$i18n.t('latest')})</span>
+						{/if}
+					</span>
+					<span class="text-[10px] text-gray-400 shrink-0">{turnCallCount}</span>
+				</button>
+
+				{#if turnExpanded}
+					{#each turn.calls as call, callIdx}
+						{@const queryKey = `${turn.turnId}-${call._tab || activeTab}-${callIdx}`}
+						{@const isExpanded = isSearching || expandedQueries[queryKey] !== false}
+						<!-- Query row -->
 				<button
 					class="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition"
 					on:click={() => toggleQuery(queryKey)}
@@ -262,6 +327,8 @@
 							</div>
 						</div>
 					{/each}
+				{/if}
+			{/each}
 				{/if}
 			{/each}
 		{/if}

@@ -33,8 +33,8 @@
 	// Track which chatId the tool explorer was last populated for
 	let _toolExplorerChatId = '';
 
-	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean }) {
-		const { data, messageDone } = params;
+	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean; turnId?: string }) {
+		const { data, messageDone, turnId } = params;
 		if (!data) return;
 		const currentChatId = get(chatId);
 		// If chatId changed since last population, reset first
@@ -43,25 +43,34 @@
 		}
 		_toolExplorerChatId = currentChatId;
 		const existing = get(toolExplorerData);
+		const tagged = (calls: any[]) => calls.map((c) => (turnId && !c.turnId ? { ...c, turnId } : c));
 		if (existing) {
 			const merged = { ...existing };
 			for (const [key, calls] of Object.entries(data)) {
 				if (!merged[key]) merged[key] = [];
-				for (const call of calls) {
+				for (const call of tagged(calls as any[])) {
 					const isDup = merged[key].some(
-						(c: any) => c.query === call.query && c.results?.length === call.results?.length
+						(c: any) =>
+							c.turnId === call.turnId &&
+							c.query === call.query &&
+							c.results?.length === call.results?.length
 					);
 					if (!isDup) merged[key] = [...merged[key], call];
 				}
 			}
 			toolExplorerData.set(merged);
 		} else {
-			toolExplorerData.set(data);
+			const seeded: Record<string, any[]> = {};
+			for (const [key, calls] of Object.entries(data)) {
+				seeded[key] = tagged(calls as any[]);
+			}
+			toolExplorerData.set(seeded);
 		}
 		showToolExplorer.set(true);
 	}
 
 	export let id: string;
+	export let messageId: string = '';
 	export let tokens: Token[];
 	export let top = true;
 	export let attributes = {};
@@ -465,7 +474,7 @@
 			} catch { return null; }
 		})()}
 		{#if explorerData}
-			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done }} class="hidden" />
+			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done, turnId: messageId }} class="hidden" />
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'search_results_button'}
 		<!-- Final "검색된 문서 보기" button (only shown after done) -->
@@ -480,7 +489,11 @@
 				<button
 					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
 					on:click={() => {
-						toolExplorerData.set(explorerData);
+						const tagged: Record<string, any[]> = {};
+						for (const [key, calls] of Object.entries(explorerData as Record<string, any[]>)) {
+							tagged[key] = (calls as any[]).map((c) => (messageId && !c.turnId ? { ...c, turnId: messageId } : c));
+						}
+						toolExplorerData.set(tagged);
 						showToolExplorer.set(true);
 					}}
 				>
