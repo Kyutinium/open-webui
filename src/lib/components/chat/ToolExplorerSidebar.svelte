@@ -227,7 +227,7 @@
 				{@const turnCallCount = turn.calls.reduce((s, c) => s + (c?.results?.length || 0), 0)}
 				<!-- Turn header -->
 				<button
-					class="w-full flex items-center gap-2 px-3 py-1.5 text-left bg-gray-50/70 dark:bg-gray-800/40 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 transition sticky top-0 z-10"
+					class="w-full flex items-center gap-2 px-3 py-1.5 text-left bg-gray-50 dark:bg-gray-850 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800/80 transition sticky top-0 z-10"
 					on:click={() => toggleTurn(turn.turnId, isLatest)}
 				>
 					<svg
