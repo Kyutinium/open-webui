@@ -308,13 +308,19 @@ class Pipeline:
 
 ## MEMORY.md 활용 (시작 시 필수)
 
-검색이나 답변 작성 전, 작업 디렉토리 루트의 `MEMORY.md` 를 **먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
+검색이나 답변 작성 전, **`./MEMORY.md` (현재 working directory, pwd) 를 먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
 
+**경로 규칙 (반드시 준수)**:
+- ✅ **정확**: `./MEMORY.md` — pwd 기준. 예: pwd 가 `/tmp/workspaces/<user>/<backend>` 이면 `/tmp/workspaces/<user>/<backend>/MEMORY.md`.
+- ❌ **금지**: `../MEMORY.md`, parent directory, 또는 `/tmp/workspaces/<user>/MEMORY.md` 같은 상위 경로 — 이번 세션의 MEMORY.md 가 아님.
+- ❌ **금지**: `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 — Claude Code sensitive-file rule 차단.
+
+확인할 항목:
 - 🔵 Procedural — 과거에 효과적이었던 검색 도구 조합 / 쿼리 패턴 / 안티패턴
 - 🟡 Semantic — 사용자 선호 (응답 형식, 상세도, 부서 컨텍스트 등)
 - 🟢 Episodic — 최근 사용자 컨텍스트 / 진행 중 주제
 
-이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. MEMORY.md 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
+이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. `./MEMORY.md` 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
 
     def _get_memory_update_instruction(self) -> str:
         return """
