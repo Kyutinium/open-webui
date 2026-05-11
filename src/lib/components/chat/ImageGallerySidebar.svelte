@@ -91,15 +91,15 @@
 	}
 
 	async function discoverMaxPage(startFrom: number) {
-		console.log('[gallery] discoverMaxPage entry', { startFrom, maxPageSearching });
-		if (maxPageSearching) { console.log('[gallery] discoverMaxPage SKIPPED (already searching)'); return; }
+		console.warn('[gallery] discoverMaxPage entry', { startFrom, maxPageSearching });
+		if (maxPageSearching) { console.warn('[gallery] discoverMaxPage SKIPPED (already searching)'); return; }
 		maxPageSearching = true;
 		let n = startFrom;
 		while (true) {
 			const url = buildPageUrl(n + 1);
-			console.log('[gallery] checking page', n + 1, url);
+			console.warn('[gallery] checking page', n + 1, url);
 			const exists = await checkImageExists(url);
-			console.log('[gallery] page', n + 1, 'exists=', exists);
+			console.warn('[gallery] page', n + 1, 'exists=', exists);
 			if (exists) {
 				n++;
 				maxPageFound = n;
@@ -120,7 +120,7 @@
 	}
 
 	async function loadImages() {
-		console.log('[gallery] loadImages called', { folder, currentFile, hasImages: !!$imageGalleryData?.images });
+		console.warn('[gallery] loadImages called', { folder, currentFile, hasImages: !!$imageGalleryData?.images });
 		loading = true;
 		currentIndex = 0;
 		patternMode = false;
@@ -139,13 +139,13 @@
 				currentIndex = idx >= 0 ? idx : 0;
 			}
 			loading = false;
-			console.log('[gallery] mode1 direct, count=', images.length);
+			console.warn('[gallery] mode1 direct, count=', images.length);
 			return;
 		}
 
 		// Mode 2: URL pattern-based lazy loading
 		const fullUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
-		console.log('[gallery] fullUrl', fullUrl);
+		console.warn('[gallery] fullUrl', fullUrl);
 		if (!fullUrl) {
 			images = [];
 			loading = false;
@@ -153,7 +153,7 @@
 		}
 
 		const parsed = parsePageUrl(fullUrl);
-		console.log('[gallery] parsed', parsed);
+		console.warn('[gallery] parsed', parsed);
 		if (parsed) {
 			patternMode = true;
 			pageBase = parsed.base;
@@ -165,7 +165,7 @@
 			currentIndex = 0;
 			loading = false;
 
-			console.log('[gallery] starting discovery from page', parsed.pageNum);
+			console.warn('[gallery] starting discovery from page', parsed.pageNum);
 			// Discover nearby pages in background
 			// Check forward
 			discoverMaxPage(parsed.pageNum);
