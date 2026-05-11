@@ -91,15 +91,12 @@
 	}
 
 	async function discoverMaxPage(startFrom: number) {
-		console.warn('[gallery] discoverMaxPage entry', { startFrom, maxPageSearching });
-		if (maxPageSearching) { console.warn('[gallery] discoverMaxPage SKIPPED (already searching)'); return; }
+		if (maxPageSearching) return;
 		maxPageSearching = true;
 		let n = startFrom;
 		while (true) {
 			const url = buildPageUrl(n + 1);
-			console.warn('[gallery] checking page', n + 1, url);
 			const exists = await checkImageExists(url);
-			console.warn('[gallery] page', n + 1, 'exists=', exists);
 			if (exists) {
 				n++;
 				maxPageFound = n;
@@ -120,7 +117,6 @@
 	}
 
 	async function loadImages() {
-		console.warn('[gallery] loadImages called', { folder, currentFile, hasImages: !!$imageGalleryData?.images });
 		loading = true;
 		currentIndex = 0;
 		patternMode = false;
@@ -139,13 +135,11 @@
 				currentIndex = idx >= 0 ? idx : 0;
 			}
 			loading = false;
-			console.warn('[gallery] mode1 direct, count=', images.length);
 			return;
 		}
 
 		// Mode 2: URL pattern-based lazy loading
 		const fullUrl = folder && currentFile ? `${folder}/${currentFile}` : '';
-		console.warn('[gallery] fullUrl', fullUrl);
 		if (!fullUrl) {
 			images = [];
 			loading = false;
@@ -153,7 +147,6 @@
 		}
 
 		const parsed = parsePageUrl(fullUrl);
-		console.warn('[gallery] parsed', parsed);
 		if (parsed) {
 			patternMode = true;
 			pageBase = parsed.base;
@@ -165,7 +158,6 @@
 			currentIndex = 0;
 			loading = false;
 
-			console.warn('[gallery] starting discovery from page', parsed.pageNum);
 			// Discover nearby pages in background
 			// Check forward
 			discoverMaxPage(parsed.pageNum);

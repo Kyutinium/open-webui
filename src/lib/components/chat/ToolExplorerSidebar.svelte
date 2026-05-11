@@ -126,9 +126,25 @@
 
 	function openThumbnail(thumbnail: string) {
 		if (!thumbnail) return;
+		// Some data sources store the already-proxied URL (e.g.
+		// `/api/v1/image_proxy/fetch?u=<b64>`) instead of the raw image-server
+		// URL. Unwrap it so folder/filename split + page-number parsing operate
+		// on the original URL.
+		let raw = thumbnail;
+		const proxyMatch = raw.match(/\/api\/v1\/image_proxy\/fetch\?u=([^&]+)/);
+		if (proxyMatch) {
+			try {
+				let b64 = proxyMatch[1].replace(/-/g, '+').replace(/_/g, '/');
+				const pad = b64.length % 4;
+				if (pad) b64 += '='.repeat(4 - pad);
+				raw = decodeURIComponent(escape(atob(b64)));
+			} catch {
+				/* fall back to the proxy URL as-is */
+			}
+		}
 		// Keep full URL: ImageGallerySidebar will parse it to discover sibling pages
-		const filename = thumbnail.split('/').pop() || '';
-		const folder = thumbnail.substring(0, thumbnail.lastIndexOf('/')) || '';
+		const filename = raw.split('/').pop() || '';
+		const folder = raw.substring(0, raw.lastIndexOf('/')) || '';
 		imageGalleryData.set({
 			folder,
 			current: filename
