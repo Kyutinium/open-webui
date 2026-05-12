@@ -2640,6 +2640,9 @@
 		// Only send terminal_id if the model has terminal capability enabled
 		const terminalEnabled = model.info?.meta?.capabilities?.terminal ?? true;
 
+		// "instant" models are plain LLMs — no MCP tools should be attached.
+		const isInstantModel = (model?.name ?? model?.id ?? '').toLowerCase().includes('instant');
+
 		const res = await generateOpenAIChatCompletion(
 			localStorage.token,
 			{
@@ -2657,7 +2660,8 @@
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
-				mcp_tools: selectedMcpTools.length > 0 ? selectedMcpTools : undefined,
+				mcp_tools:
+					!isInstantModel && selectedMcpTools.length > 0 ? selectedMcpTools : undefined,
 				terminal_id: terminalEnabled ? (activeTerminalId ?? undefined) : undefined,
 				tool_servers: [
 					...($toolServers ?? []).filter(
