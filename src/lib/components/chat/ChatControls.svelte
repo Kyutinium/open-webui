@@ -320,7 +320,7 @@
 				{:else if $showToolExplorer && $toolExplorerData}
 					<ToolExplorerSidebar
 						toolData={$toolExplorerData}
-						onClose={() => { showToolExplorer.set(false); toolExplorerData.set(null); showControls.set(false); }}
+						onClose={() => { showToolExplorer.set(false); showControls.set(false); }}
 					/>
 				{:else}
 					<!-- Controls + Files tabs -->

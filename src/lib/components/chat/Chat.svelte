@@ -628,17 +628,35 @@
 						/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
 					);
 					let merged: Record<string, any[]> = {};
+					const turnId = event.message_id;
 					for (const m of explorerMatches) {
 						try {
 							const data = JSON.parse(m[1].replace(/^> /gm, '').trim());
 							for (const [key, val] of Object.entries(data)) {
 								if (!merged[key]) merged[key] = [];
-								merged[key].push(...(val as any[]));
+								for (const call of val as any[]) {
+									merged[key].push(turnId && !call.turnId ? { ...call, turnId } : call);
+								}
 							}
 						} catch {}
 					}
 					if (Object.keys(merged).length > 0) {
-						toolExplorerData.set(merged);
+						// Merge with existing store data so prior turns are preserved.
+						const existing = get(toolExplorerData) || {};
+						const next: Record<string, any[]> = { ...existing };
+						for (const [key, calls] of Object.entries(merged)) {
+							if (!next[key]) next[key] = [];
+							for (const call of calls) {
+								const isDup = next[key].some(
+									(c: any) =>
+										c.turnId === call.turnId &&
+										c.query === call.query &&
+										c.results?.length === call.results?.length
+								);
+								if (!isDup) next[key] = [...next[key], call];
+							}
+						}
+						toolExplorerData.set(next);
 						showToolExplorer.set(true);
 						if (!message._controlsOpened) {
 							message._controlsOpened = true;
@@ -809,7 +827,8 @@
 				showEmbeds.set(false);
 				showImageGallery.set(false);
 				showToolExplorer.set(false);
-				toolExplorerData.set(null);
+				// Keep toolExplorerData: closing the panel should hide UI but
+				// preserve accumulated tool results across the chat session.
 			}
 		});
 
@@ -1486,6 +1505,51 @@
 				}
 
 				await tick();
+
+				// Populate tool explorer with all turns from saved messages so the
+				// sidebar is fully built before the user expands any reasoning
+				// collapsibles (which would otherwise be the only trigger that
+				// mounts autoOpenToolExplorer for nested tool_explorer details).
+				if (!$mobile && history?.messages) {
+					const next: Record<string, any[]> = {};
+					for (const msg of Object.values(history.messages) as any[]) {
+						if (!msg?.content || msg.role !== 'assistant') continue;
+						let contentToParse = msg.content;
+						if (contentToParse.includes('&lt;details')) {
+							contentToParse = contentToParse
+								.replaceAll('&lt;', '<')
+								.replaceAll('&gt;', '>')
+								.replaceAll('&quot;', '"')
+								.replaceAll('&amp;', '&');
+						}
+						contentToParse = contentToParse.replace(/^> /gm, '');
+						const matches = contentToParse.matchAll(
+							/<details\s+type="(?:tool_explorer|search_results_button)"[^>]*>\s*<summary>[^<]*<\/summary>\s*([\s\S]*?)\s*<\/details>/g
+						);
+						const turnId = msg.id;
+						for (const m of matches) {
+							try {
+								const data = JSON.parse(m[1].replace(/^> /gm, '').trim());
+								for (const [key, val] of Object.entries(data)) {
+									if (!next[key]) next[key] = [];
+									for (const raw of val as any[]) {
+										const call = turnId && !raw.turnId ? { ...raw, turnId } : raw;
+										const isDup = next[key].some(
+											(c: any) =>
+												c.turnId === call.turnId &&
+												c.query === call.query &&
+												c.results?.length === call.results?.length
+										);
+										if (!isDup) next[key].push(call);
+									}
+								}
+							} catch {}
+						}
+					}
+					if (Object.keys(next).length > 0) {
+						toolExplorerData.set(next);
+					}
+				}
 
 				return true;
 			} else {

@@ -15,6 +15,7 @@
 	import citationExtension from '$lib/utils/marked/citation-extension';
 
 	export let id = '';
+	export let messageId = '';
 	export let content;
 	export let done = true;
 	export let model = null;
@@ -91,6 +92,7 @@
 	<MarkdownTokens
 		{tokens}
 		{id}
+		{messageId}
 		{done}
 		{save}
 		{preview}

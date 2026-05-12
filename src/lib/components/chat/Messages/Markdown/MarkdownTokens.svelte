@@ -33,8 +33,8 @@
 	// Track which chatId the tool explorer was last populated for
 	let _toolExplorerChatId = '';
 
-	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean }) {
-		const { data, messageDone } = params;
+	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean; turnId?: string }) {
+		const { data, messageDone, turnId } = params;
 		if (!data) return;
 		const currentChatId = get(chatId);
 		// If chatId changed since last population, reset first
@@ -43,25 +43,34 @@
 		}
 		_toolExplorerChatId = currentChatId;
 		const existing = get(toolExplorerData);
+		const tagged = (calls: any[]) => calls.map((c) => (turnId && !c.turnId ? { ...c, turnId } : c));
 		if (existing) {
 			const merged = { ...existing };
 			for (const [key, calls] of Object.entries(data)) {
 				if (!merged[key]) merged[key] = [];
-				for (const call of calls) {
+				for (const call of tagged(calls as any[])) {
 					const isDup = merged[key].some(
-						(c: any) => c.query === call.query && c.results?.length === call.results?.length
+						(c: any) =>
+							c.turnId === call.turnId &&
+							c.query === call.query &&
+							c.results?.length === call.results?.length
 					);
 					if (!isDup) merged[key] = [...merged[key], call];
 				}
 			}
 			toolExplorerData.set(merged);
 		} else {
-			toolExplorerData.set(data);
+			const seeded: Record<string, any[]> = {};
+			for (const [key, calls] of Object.entries(data)) {
+				seeded[key] = tagged(calls as any[]);
+			}
+			toolExplorerData.set(seeded);
 		}
 		showToolExplorer.set(true);
 	}
 
 	export let id: string;
+	export let messageId: string = '';
 	export let tokens: Token[];
 	export let top = true;
 	export let attributes = {};
@@ -307,6 +316,7 @@
 			<blockquote dir="auto">
 				<svelte:self
 					id={`${id}-${tokenIdx}`}
+					{messageId}
 					tokens={token.tokens}
 					{done}
 					{editCodeBlock}
@@ -341,6 +351,7 @@
 
 						<svelte:self
 							id={`${id}-${tokenIdx}-${itemIdx}`}
+							{messageId}
 							tokens={item.tokens}
 							top={token.loose}
 							{done}
@@ -376,6 +387,7 @@
 							<div>
 								<svelte:self
 									id={`${id}-${tokenIdx}-${itemIdx}`}
+									{messageId}
 									tokens={item.tokens}
 									top={token.loose}
 									{done}
@@ -388,6 +400,7 @@
 						{:else}
 							<svelte:self
 								id={`${id}-${tokenIdx}-${itemIdx}`}
+								{messageId}
 								tokens={item.tokens}
 								top={token.loose}
 								{done}
@@ -432,6 +445,7 @@
 							<div class="mb-1.5" slot="content">
 								<svelte:self
 									id={`${id}-${tokenIdx}-${detailIdx}-d`}
+									{messageId}
 									tokens={marked.lexer(decode(detailToken.text))}
 									attributes={detailToken?.attributes}
 									{done}
@@ -465,7 +479,7 @@
 			} catch { return null; }
 		})()}
 		{#if explorerData}
-			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done }} class="hidden" />
+			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done, turnId: messageId }} class="hidden" />
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'search_results_button'}
 		<!-- Final "검색된 문서 보기" button (only shown after done) -->
@@ -478,9 +492,29 @@
 			})()}
 			{#if explorerData}
 				<button
-					class="flex items-center gap-1.5 px-2 py-1 my-0.5 rounded border border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition text-[11px] text-gray-400"
+					class="flex items-center gap-1.5 px-2.5 py-1 my-0.5 rounded border border-blue-500/70 dark:border-blue-400/70 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition text-[11px] font-medium text-blue-600 dark:text-blue-400"
 					on:click={() => {
-						toolExplorerData.set(explorerData);
+						// Ensure this message's calls are in the store (some messages
+						// only emit search_results_button without a streaming
+						// tool_explorer block, so the auto-push path may not have
+						// populated them). Merge with existing data so prior turns
+						// are preserved; dedup means repeated clicks are no-ops.
+						const existing = get(toolExplorerData) || {};
+						const next: Record<string, any[]> = { ...existing };
+						for (const [key, calls] of Object.entries(explorerData as Record<string, any[]>)) {
+							if (!next[key]) next[key] = [];
+							for (const raw of calls as any[]) {
+								const call = messageId && !raw.turnId ? { ...raw, turnId: messageId } : raw;
+								const isDup = next[key].some(
+									(c: any) =>
+										c.turnId === call.turnId &&
+										c.query === call.query &&
+										c.results?.length === call.results?.length
+								);
+								if (!isDup) next[key] = [...next[key], call];
+							}
+						}
+						toolExplorerData.set(next);
 						showToolExplorer.set(true);
 					}}
 				>
@@ -532,6 +566,7 @@
 				<div class=" mb-1.5" slot="content">
 					<svelte:self
 						id={`${id}-${tokenIdx}-d`}
+						{messageId}
 						tokens={marked.lexer(decode(token.text))}
 						attributes={token?.attributes}
 						{done}
