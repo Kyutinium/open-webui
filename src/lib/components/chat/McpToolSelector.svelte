@@ -9,7 +9,6 @@
 	let _mcpToolsCache: Array<McpTool> = [];
 	let _mcpLastSelection: string[] | null = null;
 	let _confluenceAuthenticated = false;
-	let _localStorageLoaded = false;
 </script>
 
 <script lang="ts">
@@ -67,18 +66,16 @@
 	}
 
 	onMount(async () => {
-		// Restore from localStorage first, then module cache
-		if (!_localStorageLoaded) {
+		// Restore selection from localStorage every mount — Chat.svelte remounts after
+		// navigating away (e.g. admin panel) and resets the bound `selectedMcpTools` to [].
+		if (selectedMcpTools.length === 0) {
 			const saved = loadSelection();
 			if (saved !== null && saved.length > 0) {
 				selectedMcpTools = saved;
 				_mcpLastSelection = saved;
-			} else if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
+			} else if (_mcpLastSelection !== null) {
 				selectedMcpTools = [..._mcpLastSelection];
 			}
-			_localStorageLoaded = true;
-		} else if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
-			selectedMcpTools = [..._mcpLastSelection];
 		}
 
 		if (_mcpToolsCache.length > 0) {
@@ -92,19 +89,18 @@
 				if (resp.ok) {
 					mcpTools = await resp.json();
 					_mcpToolsCache = mcpTools;
-					if (mcpTools.length > 0) {
-						// First-time selection: all optional tools on by default. Forced defaults
-						// get merged in by the reactive block above regardless of user state.
-						if (selectedMcpTools.length === 0) {
-							selectedMcpTools = mcpTools.filter((t) => !t.default).map((t) => t.id);
-							saveSelection();
-						}
-					}
 				}
 			} catch (e) {
 				console.error('Failed to load MCP tools:', e);
 			}
 			loaded = true;
+		}
+
+		// First-time fallback: with tools loaded but no saved selection, turn all
+		// optional tools on. Forced defaults are handled by the reactive block above.
+		if (mcpTools.length > 0 && selectedMcpTools.length === 0) {
+			selectedMcpTools = mcpTools.filter((t) => !t.default).map((t) => t.id);
+			saveSelection();
 		}
 
 		// Check confluence auth on mount
