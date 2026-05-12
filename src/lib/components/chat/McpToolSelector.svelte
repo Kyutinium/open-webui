@@ -60,24 +60,14 @@
 	function loadSelection(): string[] | null {
 		try {
 			const saved = localStorage.getItem('mcpToolSelection');
-			if (saved) return JSON.parse(saved);
+			if (saved !== null) return JSON.parse(saved);
 		} catch {}
 		return null;
 	}
 
 	onMount(async () => {
-		// Restore selection from localStorage every mount — Chat.svelte remounts after
-		// navigating away (e.g. admin panel) and resets the bound `selectedMcpTools` to [].
-		if (selectedMcpTools.length === 0) {
-			const saved = loadSelection();
-			if (saved !== null && saved.length > 0) {
-				selectedMcpTools = saved;
-				_mcpLastSelection = saved;
-			} else if (_mcpLastSelection !== null) {
-				selectedMcpTools = [..._mcpLastSelection];
-			}
-		}
-
+		// Load tools (cache or fetch) before settling on a selection so the first-time
+		// fallback has the actual tool list to work with.
 		if (_mcpToolsCache.length > 0) {
 			mcpTools = _mcpToolsCache;
 			loaded = true;
@@ -96,10 +86,21 @@
 			loaded = true;
 		}
 
-		// First-time fallback: with tools loaded but no saved selection, turn all
-		// optional tools on. Forced defaults are handled by the reactive block above.
-		if (mcpTools.length > 0 && selectedMcpTools.length === 0) {
+		// Chat.svelte resets the bound `selectedMcpTools` to [] on every remount (e.g.
+		// navigating between chats or to the home route). Always re-derive selection
+		// here so it survives those remounts:
+		//   1. localStorage holds the authoritative state (incl. user-explicit empty).
+		//   2. Module-scope cache as a fallback within a single page session.
+		//   3. First-time fallback: turn all optional tools on.
+		const saved = loadSelection();
+		if (saved !== null) {
+			selectedMcpTools = saved;
+			_mcpLastSelection = saved;
+		} else if (_mcpLastSelection !== null) {
+			selectedMcpTools = [..._mcpLastSelection];
+		} else if (mcpTools.length > 0) {
 			selectedMcpTools = mcpTools.filter((t) => !t.default).map((t) => t.id);
+			_mcpLastSelection = [...selectedMcpTools];
 			saveSelection();
 		}
 
