@@ -1,13 +1,30 @@
 """
-title: Development Assistant (Responses, OpenCode, no AskUserQuestion)
+title: Development Assistant (Responses, OpenCode, vchat-ui think)
 author: claude-code-openai-wrapper
-version: 0.2.0
+version: 0.3.0
 description: .
-    OpenCode-backed variant of the wo-AskUserQuestion Responses pipe.
+    OpenCode-backed Responses pipe with custom_chat_ui-style think handling.
 
-    Identical to chatdragon_responses_wo_userquestions, but the default
-    MODEL valve targets the gateway's OpenCode backend
-    (``opencode/<provider>/<model>``) instead of native Claude.
+    Forked from chatdragon_responses_wo_userquestions_opencode. Same
+    feature set (session-aware via previous_response_id, user context
+    injection, credential forwarding, thought_wrapped mode) but the
+    default-mode ``<think>`` handling is reworked so reasoning still
+    renders as a proper Open WebUI thinking block even when tool blocks
+    interleave — matching how custom_chat_ui keeps reasoning parts as
+    distinct collapsible "Thinking..." blocks alongside tool output.
+
+    What changed vs chatdragon_responses_wo_userquestions_opencode
+    (default mode only — thought_wrapped is unaffected):
+
+    - Mid-think tool render still force-closes ``</think>`` so Open WebUI
+      does not nest the tool ``<details>`` inside the collapsed thinking
+      block (root cause of "think doesn't render" symptom).
+    - On the next post-tool text delta, ``<think>`` is automatically
+      re-opened so the model's continued reasoning renders as a fresh
+      collapsible thinking block instead of leaking out as plain text.
+      Multiple thinking blocks may be emitted across a single turn.
+    - At stream end, any open ``<think>`` we synthesised is closed so
+      the open/close count stays balanced.
 
     Requires the gateway to be configured with:
       BACKENDS=claude,opencode
@@ -16,15 +33,8 @@ description: .
 
     See docs/opencode-litellm.md in the harness-gateway repo for setup.
 
-    Non-AskUserQuestion features behave identically to the regular
-    chatdragon_responses pipe:
-    - Session-aware via previous_response_id (with task-chain skip
-      and 409 stale recovery so multi-turn never ``Stale...``)
-    - User context injection (mlm_username from email ID)
-    - Credential forwarding for MCP authentication
-    - thought_wrapped mode
-
-    What's missing vs the regular pipe:
+    What's still missing vs the regular pipe (inherited from upstream
+    wo-AskUserQuestion variant):
     - No card UI for AskUserQuestion (model-fired tool just stalls
       silently, like before the card existed)
     - No function_call_output routing
@@ -139,14 +149,6 @@ class Pipeline:
             default=True,
             description="Inject instruction for model to output <response> tag when done thinking",
         )
-        MEMORY_REFERENCE_PROMPT: bool = Field(
-            default=True,
-            description="Inject instruction telling Claude to Read the workspace MEMORY.md first and reference it when planning searches and answering",
-        )
-        MEMORY_UPDATE_PROMPT: bool = Field(
-            default=True,
-            description="Inject instruction telling Claude to update ./MEMORY.md (workspace cwd, NOT .claude/) before each final answer when admission criteria are met. Disable for read-only memory mode.",
-        )
         TOOL_DISPLAY: bool = Field(
             default=True,
             description="Show detailed tool blocks with args and result; when off, show a short status line instead",
@@ -183,8 +185,8 @@ class Pipeline:
     def pipes(self) -> list:
         return [
             {
-                "id": "chatdragon-responses-wo-userquestions-opencode",
-                "name": "Chatdragon Responses (OpenCode, no AskUserQuestion)",
+                "id": "opencode-vchat-ui",
+                "name": "Chatdragon Responses (OpenCode, vchat-ui think)",
             }
         ]
 
@@ -284,13 +286,14 @@ class Pipeline:
         return text
 
     def _get_thought_wrapped_instruction(self) -> str:
-        # The ``<response>`` token rule is preserved because that's how
-        # thought_wrapped mode locates the user-visible portion of the
-        # reply.  MEMORY.md *read* and *update* guidance live in their
-        # own helpers — see :meth:`_get_memory_reference_instruction`
-        # (``MEMORY_REFERENCE_PROMPT`` valve) and
-        # :meth:`_get_memory_update_instruction`
-        # (``MEMORY_UPDATE_PROMPT`` valve).
+        # NOTE: this variant intentionally drops the MEMORY.md update
+        # protocol section.  Without the AskUserQuestion card flow the
+        # SDK auto-denies any ``Edit(.claude/MEMORY.md, …)`` call, so
+        # asking the model to attempt one every turn would produce a
+        # cycle of attempt → deny → ``MEMORY_SKIP`` noise without ever
+        # actually persisting anything.  The ``<response>`` token rule
+        # is preserved because that's how thought_wrapped mode locates
+        # the user-visible portion of the reply.
         return """
 
 ## 답변 작성 규칙
@@ -302,63 +305,6 @@ class Pipeline:
 - 검색/도구 없이 바로 답변하는 경우: 답변 시작 직전에 `<response>` 출력
 
 이 토큰 이후에 최종 답변을 작성한다."""
-
-    def _get_memory_reference_instruction(self) -> str:
-        return """
-
-## MEMORY.md 활용 (시작 시 필수)
-
-검색이나 답변 작성 전, **`./MEMORY.md` (현재 working directory, pwd) 를 먼저 Read** 해서 다음을 확인하고 이번 턴에 반영한다:
-
-**경로 규칙 (반드시 준수)**:
-- ✅ **정확**: `./MEMORY.md` — pwd 기준. 예: pwd 가 `/tmp/workspaces/<user>/<backend>` 이면 `/tmp/workspaces/<user>/<backend>/MEMORY.md`.
-- ❌ **금지**: `../MEMORY.md`, parent directory, 또는 `/tmp/workspaces/<user>/MEMORY.md` 같은 상위 경로 — 이번 세션의 MEMORY.md 가 아님.
-- ❌ **금지**: `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 — Claude Code sensitive-file rule 차단.
-
-확인할 항목:
-- 🔵 Procedural — 과거에 효과적이었던 검색 도구 조합 / 쿼리 패턴 / 안티패턴
-- 🟡 Semantic — 사용자 선호 (응답 형식, 상세도, 부서 컨텍스트 등)
-- 🟢 Episodic — 최근 사용자 컨텍스트 / 진행 중 주제
-
-이 정보를 도구 선택, 쿼리 작성, 답변 스타일에 반영한다. `./MEMORY.md` 가 없거나 비어 있어도 무방 — 그 경우는 새로 축적해 나가면 된다."""
-
-    def _get_memory_update_instruction(self) -> str:
-        return """
-
-## MEMORY.md 업데이트 프로토콜 (필수 순서)
-
-답변 작성 직전, 아래 시퀀스를 **이 순서대로** 실행한다:
-
-1. **판단** — 이번 턴에 MEMORY.md 에 추가할 새 entry 가 있는가?
-   (Admission 기준: future utility + observation ≥2회 + 기존 항목과 non-duplicate, 모두 Yes 일 때만)
-
-2. **업데이트 필요 시** — 먼저 Edit 도구로 실제 파일 수정:
-   `Edit(file_path="./MEMORY.md", old_string="...", new_string="...")`
-
-   **경로 규칙 (반드시 준수)**:
-   - ✅ `./MEMORY.md` — 현재 working directory (pwd) 의 MEMORY.md
-   - ❌ `../MEMORY.md` 또는 parent directory 의 MEMORY.md (다른 세션과 격리되어야 함)
-   - ❌ `.claude/MEMORY.md` 또는 `.claude/` 안의 어떤 경로 (Claude Code sensitive-file rule 차단)
-
-3. Edit 도구의 성공 반환 (예: "File updated") 을 **확인한 직후**, 마커 출력:
-   `MEMORY_UPDATE: <방금 추가한 entry 한 줄 요약>`
-
-4. **업데이트 불필요 시**: `MEMORY_SKIP: <사유>` 출력
-   (사유 예시: "novelty 미달" / "observation <2회" / "기존 항목과 중복" / "update 불필요")
-
-5. 마지막으로 `<response>` 토큰 출력.
-
-**금지 규칙**: Edit 도구 호출이 선행되지 않았다면 `MEMORY_UPDATE` 를 적지 마라.
-Edit 없이 `MEMORY_UPDATE` 를 출력하는 것은 **false reporting** 이며 protocol violation 이다.
-
-출력 예 (업데이트 수행 시):
-```
-[Edit 도구 호출 → "File updated" 결과 확인됨]
-MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
-<response>
-```
-
-이 마커 라인은 `<thought>` collapsible 안에 남고 최종 사용자 응답에는 표시되지 않는다."""
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
@@ -766,10 +712,6 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         and not __task__
                     ):
                         content += self._get_thought_wrapped_instruction()
-                    if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
-                        content += self._get_memory_reference_instruction()
-                    if self.valves.MEMORY_UPDATE_PROMPT and not __task__:
-                        content += self._get_memory_update_instruction()
                     messages[i] = {**messages[i], "content": content}
                 elif isinstance(content, list):
                     # Multimodal content (e.g. image + text from VQA queries).
@@ -796,10 +738,6 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             and not __task__
                         ):
                             text += self._get_thought_wrapped_instruction()
-                        if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
-                            text += self._get_memory_reference_instruction()
-                        if self.valves.MEMORY_UPDATE_PROMPT and not __task__:
-                            text += self._get_memory_update_instruction()
                         content = list(content)
                         content[last_text_idx] = {**content[last_text_idx], "text": text}
                     messages[i] = {**messages[i], "content": content}
@@ -884,14 +822,19 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         # Default-mode <think>/tool interleaving state.  When the model is
         # mid-``<think>`` and a tool block needs to render, close think first
         # so Open WebUI does not nest the tool ``<details>`` inside the
-        # collapsed think block.  Post-tool text is intentionally NOT
-        # re-wrapped in ``<think>`` — operators want intermediate progress
-        # narration ("Searching for X next…") visible as plain text, not
-        # hidden behind a collapsed thought block.  ``pending_skip_close_think``
-        # tracks how many model-emitted ``</think>`` tags to strip (one per
-        # forced pre-close) so the count of opens vs closes stays balanced.
+        # collapsed think block.  Unlike the upstream wo-AskUserQuestion
+        # opencode pipe, this variant **re-opens** ``<think>`` on the next
+        # post-tool text delta so continued reasoning still renders as a
+        # collapsible thinking block (matching custom_chat_ui's behaviour
+        # of keeping reasoning visually distinct from tool output and from
+        # the final response).  ``pending_skip_close_think`` tracks how
+        # many model-emitted ``</think>`` tags to strip (one per forced
+        # pre-close) so the count of opens vs closes stays balanced.
+        # ``pending_reopen_think`` is set when we forced a close and the
+        # next non-empty text chunk should be prefixed with ``<think>\n``.
         in_think_block = False
         pending_skip_close_think = 0
+        pending_reopen_think = False
 
         tool_names: dict = {}
         tool_pending: dict = {}
@@ -1069,70 +1012,58 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                     if thumbs:
                                         collected_thumbnails.extend(thumbs)
                                         log.info("[PIPE] collected %d thumbnails", len(thumbs))
-                                    # Structured results for tool explorer.
-                                    # OpenCode flattens MCP tool names (e.g.
-                                    # ``basic_knowledge_basic_knowledge``) so we
-                                    # can't gate on the ``mcp__`` prefix the
-                                    # native Claude SDK uses. The extractor is
-                                    # shape-based and returns [] for tools that
-                                    # don't have a search-result payload, so it
-                                    # is safe to try every tool result here.
-                                    if self._hide_from_explorer(t_name):
-                                        results = []
-                                    else:
+                                    # Structured results for tool explorer
+                                    if t_name.startswith("mcp__"):
                                         results = self._extract_tool_results_for_explorer(raw)
-                                    if results:
-                                        # Use the friendly label so the sidebar
-                                        # shows e.g. "knowledge base" rather
-                                        # than ``mcp__basic_knowledge__…`` or
-                                        # ``basic_knowledge_basic_knowledge``.
-                                        label = self._tool_label(t_name) or t_name or "tool"
-                                        # Get query from args
-                                        orig_args = persisted_match["args"] if persisted_match else ""
-                                        pending = tool_pending.get(tool_id, {})
-                                        query = orig_args or pending.get("args", "{}")
-                                        try:
-                                            q_parsed = json.loads(query)
-                                            # Extract readable search query
-                                            query_str = ""
-                                            for v in q_parsed.values():
-                                                if isinstance(v, str) and len(v) > 2:
-                                                    query_str = v
-                                                    break
-                                            if query_str:
-                                                query = query_str
+                                        if results:
+                                            parts = t_name.split("__")
+                                            label = parts[1] if len(parts) >= 2 else t_name
+                                            # Get query from args
+                                            orig_args = persisted_match["args"] if persisted_match else ""
+                                            pending = tool_pending.get(tool_id, {})
+                                            query = orig_args or pending.get("args", "{}")
+                                            try:
+                                                q_parsed = json.loads(query)
+                                                # Extract readable search query
+                                                query_str = ""
+                                                for v in q_parsed.values():
+                                                    if isinstance(v, str) and len(v) > 2:
+                                                        query_str = v
+                                                        break
+                                                if query_str:
+                                                    query = query_str
+                                                else:
+                                                    # No obvious string value; show key=value pairs
+                                                    pairs = [
+                                                        f"{k}={v}" for k, v in q_parsed.items()
+                                                        if isinstance(v, (str, int, float)) and str(v).strip()
+                                                    ]
+                                                    query = ", ".join(pairs) if pairs else query
+                                            except (json.JSONDecodeError, AttributeError):
+                                                pass
+                                            call_data = {
+                                                "query": query[:200],
+                                                "results": results,
+                                            }
+                                            # Track for dedup
+                                            if label not in tool_explorer_data:
+                                                tool_explorer_data[label] = []
+                                            tool_explorer_data[label].append(call_data)
+                                            # Emit immediately so sidebar updates live
+                                            explorer_tag = self._build_tool_explorer_tag(
+                                                {label: [call_data]}
+                                            )
+                                            if thought_wrapped and not response_tag_sent:
+                                                if text_buffer:
+                                                    yield text_buffer
+                                                    text_buffer = ""
+                                                yield explorer_tag
                                             else:
-                                                # No obvious string value; show key=value pairs
-                                                pairs = [
-                                                    f"{k}={v}" for k, v in q_parsed.items()
-                                                    if isinstance(v, (str, int, float)) and str(v).strip()
-                                                ]
-                                                query = ", ".join(pairs) if pairs else query
-                                        except (json.JSONDecodeError, AttributeError):
-                                            pass
-                                        call_data = {
-                                            "query": query[:200],
-                                            "results": results,
-                                        }
-                                        # Track for dedup
-                                        if label not in tool_explorer_data:
-                                            tool_explorer_data[label] = []
-                                        tool_explorer_data[label].append(call_data)
-                                        # Emit immediately so sidebar updates live
-                                        explorer_tag = self._build_tool_explorer_tag(
-                                            {label: [call_data]}
-                                        )
-                                        if thought_wrapped and not response_tag_sent:
-                                            if text_buffer:
-                                                yield text_buffer
-                                                text_buffer = ""
-                                            yield explorer_tag
-                                        else:
-                                            yield explorer_tag
-                                        log.info(
-                                            "[PIPE] tool_explorer: %s +%d results (live)",
-                                            label, len(results),
-                                        )
+                                                yield explorer_tag
+                                            log.info(
+                                                "[PIPE] tool_explorer: %s +%d results (live)",
+                                                label, len(results),
+                                            )
                                     # (persisted_map entries auto-removed via .pop above)
                             rendered = self._render_system_event(
                                 event_type, sys_event, tool_names, tool_pending,
@@ -1148,16 +1079,18 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                     # Default mode: if we're mid-<think>, close
                                     # it before the tool block so Open WebUI
                                     # does not nest the <details> inside the
-                                    # collapsed think.  Post-tool text is left
-                                    # as plain text (no reopen) — that is the
-                                    # intentional UX choice: intermediate
-                                    # narration like "검색 결과에서 …" should
-                                    # be visible to the user, not hidden in a
-                                    # collapsed thought block.
+                                    # collapsed think.  Then mark a pending
+                                    # reopen so the next post-tool text delta
+                                    # re-enters a fresh ``<think>`` block —
+                                    # this is what makes continued reasoning
+                                    # render as a collapsible thinking block
+                                    # instead of leaking as plain text after
+                                    # the tool output.
                                     if in_think_block:
                                         yield "</think>\n\n"
                                         in_think_block = False
                                         pending_skip_close_think += 1
+                                        pending_reopen_think = True
                                     yield rendered
                             continue
 
@@ -1241,6 +1174,18 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                 chunk = chunk.replace("</think>", "", 1)
                                 pending_skip_close_think -= 1
 
+                            # If a tool block force-closed <think> earlier,
+                            # re-enter a fresh think block now so continued
+                            # reasoning still renders as a collapsible
+                            # thinking block.  Skip the reopen if the chunk
+                            # is whitespace-only (the model is just sending
+                            # filler) or already starts with ``<think>``.
+                            if pending_reopen_think and chunk.strip():
+                                if not chunk.lstrip().startswith("<think>"):
+                                    yield "<think>\n"
+                                    in_think_block = True
+                                pending_reopen_think = False
+
                             # Track <think>/</think> state from this chunk so
                             # the next tool block knows whether to force-close.
                             if "<think>" in chunk:
@@ -1283,6 +1228,14 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     full_text_acc += text_buffer
                     yield text_buffer
                 text_buffer = ""
+            elif not thought_wrapped and in_think_block:
+                # Default mode: stream ended while we still had a think block
+                # open (either model never emitted </think>, or we just
+                # re-opened one after a tool block and the model produced no
+                # further text).  Close it so the open/close count balances
+                # and Open WebUI doesn't render a stray ``<think>`` marker.
+                yield "</think>"
+                in_think_block = False
 
             # (tool_explorer tags emitted live during streaming)
 
@@ -1372,11 +1325,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 chars = m.group(1) if m else "large"
                 result_content = f"Result truncated ({chars} chars)"
             result_content = result_content[:10000]
-            # Friendly display name (e.g. "knowledge base", "document search
-            # MyDB") so the inline "View Result from **NAME**" UI is readable.
-            # Falls back to the raw name for tools without a registered label.
-            display_name = self._tool_label(name) or name
-            esc_name = html.escape(display_name)
+            esc_name = html.escape(name)
 
             if self.valves.MCP_TOOL_ONLY and not name.startswith("mcp__"):
                 return None
@@ -1422,19 +1371,6 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         "google_drive": "Google Drive",
     }
 
-    # MCP server-prefix rules. Used when the tool key is dynamic (e.g. a
-    # per-DB suffix) and a static suffix→label map can't enumerate them.
-    # ``{tool}`` is replaced with everything after the server segment.
-    _MCP_SERVER_LABELS: dict[str, str] = {
-        "doc_retrieval": "document search {tool}",
-    }
-
-    # Tools whose results are too low-signal to surface in the right-sidebar
-    # Tool Explorer (e.g. glossary / common-knowledge lookups users already
-    # know).  Inline ``<details type="tool_calls">`` blocks are still
-    # rendered — only the explorer aggregation is suppressed.
-    _TOOL_EXPLORER_HIDE: set[str] = {"basic_knowledge"}
-
     # Built-in SDK tools → friendly display name.
     _BUILTIN_LABELS: dict[str, str] = {
         "read": "a file",
@@ -1470,73 +1406,18 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
     ]
 
     @classmethod
-    def _hide_from_explorer(cls, raw_name: str) -> bool:
-        """Return True if a tool's results should be omitted from the
-        right-sidebar Tool Explorer (matches both ``mcp__<server>__…`` and
-        OpenCode-flattened ``<server>_…`` forms)."""
-        lower = raw_name.lower()
-        if lower.startswith("mcp__"):
-            parts = lower.split("__")
-            if len(parts) >= 2 and parts[1] in cls._TOOL_EXPLORER_HIDE:
-                return True
-        tokens = lower.split("_")
-        for hide_key in cls._TOOL_EXPLORER_HIDE:
-            key_tokens = hide_key.split("_")
-            n = len(key_tokens)
-            if len(tokens) >= n and tokens[:n] == key_tokens:
-                return True
-        return False
-
-    @classmethod
     def _tool_label(cls, raw_name: str) -> str:
-        """Return a short, human-friendly label for a tool name.
-
-        Handles three name formats with the same resolution priority:
-          1. Built-in SDK tools (``read``, ``bash`` …) – exact match.
-          2. Native Claude MCP names ``mcp__<server>__<tool>``:
-             a. Server-prefix template in ``_MCP_SERVER_LABELS`` (dynamic
-                tools like ``mcp__doc_retrieval__<dbname>``).
-             b. Exact tool-key match in ``_MCP_LABELS``.
-             c. Tool key with underscores replaced by spaces.
-          3. OpenCode-flattened MCP names (``<server>_<tool>`` joined with
-             a single underscore):
-             a. Server-prefix template – tokens prefix-match an
-                ``_MCP_SERVER_LABELS`` key, remainder is ``{tool}``.
-             b. Any ``_MCP_LABELS`` key matched as a contiguous sub-token
-                sequence anywhere in the flattened name.
-             c. Underscore-to-space fallback.
-        """
+        """Return a short, human-friendly label for a tool name."""
         lower = raw_name.lower()
         if lower in cls._BUILTIN_LABELS:
             return cls._BUILTIN_LABELS[lower]
         if lower.startswith("mcp__"):
             parts = raw_name.split("__")
-            if len(parts) >= 3:
-                server = parts[1].lower()
-                tool = "__".join(parts[2:])
-                if server in cls._MCP_SERVER_LABELS:
-                    return cls._MCP_SERVER_LABELS[server].format(tool=tool)
             tool_key = parts[-1] if len(parts) >= 3 else parts[-1]
             if tool_key.lower() in cls._MCP_LABELS:
                 return cls._MCP_LABELS[tool_key.lower()]
             return tool_key.replace("_", " ")
-        # OpenCode flattens MCP names; first try server-prefix templates,
-        # then fall back to known ``_MCP_LABELS`` sub-token matches.
-        tokens = lower.split("_")
-        raw_tokens = raw_name.split("_")
-        for server_key, template in cls._MCP_SERVER_LABELS.items():
-            server_tokens = server_key.split("_")
-            n = len(server_tokens)
-            if len(tokens) > n and tokens[:n] == server_tokens:
-                tool = "_".join(raw_tokens[n:])
-                return template.format(tool=tool)
-        for key, friendly in cls._MCP_LABELS.items():
-            key_tokens = key.split("_")
-            n = len(key_tokens)
-            for i in range(len(tokens) - n + 1):
-                if tokens[i : i + n] == key_tokens:
-                    return friendly
-        return raw_name.replace("_", " ")
+        return raw_name
 
     @classmethod
     def _friendly_tool_notification(cls, raw_name: str, is_error: bool = False) -> str:
