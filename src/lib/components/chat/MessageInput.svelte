@@ -1751,7 +1751,12 @@
 									{/if}
 
 									<div class="ml-1 flex gap-1.5">
-										<McpToolSelector bind:selectedMcpTools bind:confluenceSessionCookie />
+										<McpToolSelector
+											bind:selectedMcpTools
+											bind:confluenceSessionCookie
+											selectedModelNames={selectedModelIds
+												.map((id) => $models.find((m) => m.id === id)?.name ?? id)}
+										/>
 
 										{#if (selectedToolIds ?? []).length > 0}
 											<Tooltip

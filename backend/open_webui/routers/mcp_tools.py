@@ -47,11 +47,14 @@ def _load_mcp_tools() -> list[dict]:
             display = name.replace("-", " ").replace("_", " ").title()
         # Auth requirement: only use explicit requires_auth flag from config
         requires_auth = config.get("requires_auth", False)
+        # Default tools are always-on and hidden from the selector UI
+        is_default = bool(config.get("default", False))
         tools.append({
             "id": pattern,
             "name": display,
             "server": name,
             "requires_confluence_auth": requires_auth,
+            "default": is_default,
         })
 
     return tools

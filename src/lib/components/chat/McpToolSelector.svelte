@@ -1,9 +1,14 @@
 <script context="module" lang="ts">
-	let _mcpToolsCache: Array<{ id: string; name: string; server: string; requires_confluence_auth?: boolean }> = [];
-	let _mcpDefaultSelection: string[] = [];
+	type McpTool = {
+		id: string;
+		name: string;
+		server: string;
+		requires_confluence_auth?: boolean;
+		default?: boolean;
+	};
+	let _mcpToolsCache: Array<McpTool> = [];
 	let _mcpLastSelection: string[] | null = null;
 	let _confluenceAuthenticated = false;
-	let _localStorageLoaded = false;
 </script>
 
 <script lang="ts">
@@ -18,12 +23,32 @@
 
 	export let selectedMcpTools: string[] = [];
 	export let confluenceSessionCookie: string = '';
+	export let selectedModelNames: string[] = [];
 
-	let mcpTools: Array<{ id: string; name: string; server: string; requires_confluence_auth?: boolean }> = _mcpToolsCache;
+	let mcpTools: Array<McpTool> = _mcpToolsCache;
 	let loaded = _mcpToolsCache.length > 0;
 	let checkingAuth = false;
 	let showLoginModal = false;
 	let loginUrl = '';
+
+	// Tools flagged `default: true` in mcp-config.json are always-on and hidden from the UI.
+	$: defaultToolIds = mcpTools.filter((t) => t.default).map((t) => t.id);
+	$: optionalTools = mcpTools.filter((t) => !t.default);
+
+	// "instant" models are plain LLMs — the Search Tools UI is hidden entirely for them.
+	$: hideForInstant = selectedModelNames.some((n) => (n ?? '').toLowerCase().includes('instant'));
+
+	function uniqueUnion(a: string[], b: string[]): string[] {
+		return Array.from(new Set([...a, ...b]));
+	}
+
+	// Keep default tool IDs in selectedMcpTools whenever the default list changes.
+	$: if (loaded && defaultToolIds.length > 0) {
+		const merged = uniqueUnion(defaultToolIds, selectedMcpTools);
+		if (merged.length !== selectedMcpTools.length) {
+			selectedMcpTools = merged;
+		}
+	}
 
 	// Load/save selection from localStorage (per-user persistence)
 	function saveSelection() {
@@ -35,26 +60,14 @@
 	function loadSelection(): string[] | null {
 		try {
 			const saved = localStorage.getItem('mcpToolSelection');
-			if (saved) return JSON.parse(saved);
+			if (saved !== null) return JSON.parse(saved);
 		} catch {}
 		return null;
 	}
 
 	onMount(async () => {
-		// Restore from localStorage first, then module cache
-		if (!_localStorageLoaded) {
-			const saved = loadSelection();
-			if (saved !== null && saved.length > 0) {
-				selectedMcpTools = saved;
-				_mcpLastSelection = saved;
-			} else if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
-				selectedMcpTools = [..._mcpLastSelection];
-			}
-			_localStorageLoaded = true;
-		} else if (_mcpLastSelection !== null && selectedMcpTools.length === 0) {
-			selectedMcpTools = [..._mcpLastSelection];
-		}
-
+		// Load tools (cache or fetch) before settling on a selection so the first-time
+		// fallback has the actual tool list to work with.
 		if (_mcpToolsCache.length > 0) {
 			mcpTools = _mcpToolsCache;
 			loaded = true;
@@ -66,18 +79,29 @@
 				if (resp.ok) {
 					mcpTools = await resp.json();
 					_mcpToolsCache = mcpTools;
-					if (mcpTools.length > 0) {
-						_mcpDefaultSelection = mcpTools.map((t) => t.id);
-						if (selectedMcpTools.length === 0) {
-							selectedMcpTools = [..._mcpDefaultSelection];
-							saveSelection();
-						}
-					}
 				}
 			} catch (e) {
 				console.error('Failed to load MCP tools:', e);
 			}
 			loaded = true;
+		}
+
+		// Chat.svelte resets the bound `selectedMcpTools` to [] on every remount (e.g.
+		// navigating between chats or to the home route). Always re-derive selection
+		// here so it survives those remounts:
+		//   1. localStorage holds the authoritative state (incl. user-explicit empty).
+		//   2. Module-scope cache as a fallback within a single page session.
+		//   3. First-time fallback: turn all optional tools on.
+		const saved = loadSelection();
+		if (saved !== null) {
+			selectedMcpTools = saved;
+			_mcpLastSelection = saved;
+		} else if (_mcpLastSelection !== null) {
+			selectedMcpTools = [..._mcpLastSelection];
+		} else if (mcpTools.length > 0) {
+			selectedMcpTools = mcpTools.filter((t) => !t.default).map((t) => t.id);
+			_mcpLastSelection = [...selectedMcpTools];
+			saveSelection();
 		}
 
 		// Check confluence auth on mount
@@ -180,6 +204,9 @@
 	}
 
 	async function toggleTool(id: string) {
+		// Default tools cannot be toggled off.
+		if (defaultToolIds.includes(id)) return;
+
 		if (selectedMcpTools.includes(id)) {
 			selectedMcpTools = selectedMcpTools.filter((t) => t !== id);
 		} else {
@@ -195,10 +222,13 @@
 	}
 
 	async function toggleAll() {
-		if (selectedMcpTools.length === mcpTools.length) {
-			selectedMcpTools = [];
+		const optionalIds = optionalTools.map((t) => t.id);
+		const allOptionalSelected =
+			optionalIds.length > 0 && optionalIds.every((id) => selectedMcpTools.includes(id));
+		if (allOptionalSelected) {
+			selectedMcpTools = selectedMcpTools.filter((id) => !optionalIds.includes(id));
 		} else {
-			selectedMcpTools = mcpTools.map((t) => t.id);
+			selectedMcpTools = uniqueUnion(selectedMcpTools, optionalIds);
 			if (hasAnyConfluenceToolSelected() && !_confluenceAuthenticated) {
 				await promptConfluenceLogin();
 			}
@@ -207,12 +237,13 @@
 		saveSelection();
 	}
 
-	$: allSelected = mcpTools.length > 0 && selectedMcpTools.length === mcpTools.length;
-	$: someSelected = selectedMcpTools.length > 0 && selectedMcpTools.length < mcpTools.length;
-	$: noneSelected = selectedMcpTools.length === 0;
+	$: optionalSelectedCount = optionalTools.filter((t) => selectedMcpTools.includes(t.id)).length;
+	$: allSelected = optionalTools.length > 0 && optionalSelectedCount === optionalTools.length;
+	$: someSelected = optionalSelectedCount > 0 && optionalSelectedCount < optionalTools.length;
+	$: noneSelected = optionalSelectedCount === 0;
 </script>
 
-{#if loaded && mcpTools.length > 0}
+{#if loaded && optionalTools.length > 0 && !hideForInstant}
 	<Dropdown side="top" align="start">
 		<button
 			class="flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs transition
@@ -228,7 +259,7 @@
 			{#if allSelected}
 				<span class="opacity-60">(all)</span>
 			{:else if someSelected}
-				<span class="opacity-60">({selectedMcpTools.length})</span>
+				<span class="opacity-60">({optionalSelectedCount})</span>
 			{:else if noneSelected}
 				<span class="opacity-60">(off)</span>
 			{/if}
@@ -255,7 +286,7 @@
 				<hr class="border-gray-50 dark:border-gray-800 mx-2 my-0.5" />
 
 				<!-- Individual tools -->
-				{#each mcpTools as tool}
+				{#each optionalTools as tool}
 					<button
 						type="button"
 						class="flex w-full justify-between gap-2 items-center px-3 py-1.5 text-sm cursor-pointer rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50"
