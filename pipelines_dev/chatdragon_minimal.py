@@ -1,33 +1,24 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.7.0
+version: 0.2.0
 description: |
-    Bare-minimum /v1/responses pipe used to diagnose where the
-    feature-rich chatdragon_responses_* pipes inject behavior that
-    breaks subagent output. Layered incrementally so each feature
-    added back is its own commit:
+    Bare-minimum /v1/responses pipe for diagnosing why feature-rich
+    pipes break subagent output.
 
-      v0.1.0  text-only forwarding (response.output_text.delta)
-      v0.2.0  + tool_use / tool_result / task_* rendering
-      v0.3.0  + previous_response_id chaining per chat_id
-      v0.5.0  cleanup pass
-      v0.6.0  + payload.user (workspace isolation)
-      v0.7.0  rollback to v0.2.0 functionality — drop user and
-              previous_response_id so we can re-isolate which
-              addition is making subagents return empty. The
-              streaming-correct refactor (pipe() returns
-              _stream(), persistent httpx client, pipes()
-              registration) is kept.
+    Adds tool/task rendering on top of v0.1.0:
+    - response.tool_use     → buffered; rendered alongside tool_result
+    - response.tool_result  → <details type="tool_calls"> block (Open WebUI
+                              renders the native tool widget) with name +
+                              args + truncated result
+    - response.task_started / task_progress / task_notification
+                            → blockquote status lines (subagent lifecycle)
 
-    Currently omits: allowed_tools, instructions, context
-    injection (mlm_username / dscrowd token), MEMORY.md guidance,
-    thought_wrapped / <response> token, user identity,
-    previous_response_id chaining.
+    Still omits everything else: no allowed_tools, no instructions,
+    no context injection, no MEMORY.md / <response> guidance, no
+    thought_wrapped, no previous_response_id chaining.
 
-    DEBUG_RAW=true dumps every SSE chunk as JSON instead of
-    rendering — useful when chunk timing / shape is what you want
-    to inspect.
+    DEBUG_RAW=true to dump every SSE chunk as JSON instead.
 license: MIT
 """
 
@@ -75,15 +66,13 @@ class Pipeline:
         )
 
     def __init__(self) -> None:
+        self.type = "manifold"
+        self.id = "chatdragon_minimal"
+        self.name = "chatdragon/"
         self.valves = self.Valves()
 
-    def pipes(self) -> list[dict]:
-        return [
-            {
-                "id": "chatdragon-minimal",
-                "name": "ChatDragon Minimal (diagnostic)",
-            }
-        ]
+    def pipelines(self) -> list[dict]:
+        return [{"id": "minimal", "name": "minimal"}]
 
     # ------------------------------------------------------------------
     # Event renderers
@@ -124,6 +113,7 @@ class Pipeline:
         is_error = bool(chunk.get("is_error", False))
         raw_content = chunk.get("content", "") or ""
         if isinstance(raw_content, list):
+            # MCP results often arrive as [{"type": "text", "text": "..."}]
             parts = []
             for p in raw_content:
                 if isinstance(p, dict):
@@ -158,9 +148,9 @@ class Pipeline:
         self,
         user_message: str,
         model_id: str,
-        messages: list,
+        messages: list[dict],
         body: dict,
-    ):
+    ) -> Iterator[str]:
         last_user_content = user_message
         for m in reversed(messages):
             if m.get("role") == "user":
@@ -183,133 +173,101 @@ class Pipeline:
 
         log.info("[MINIMAL] POST %s/v1/responses payload=%s", self.valves.BASE_URL, payload)
 
-        return self._stream(payload)
-
-    # ------------------------------------------------------------------
-    # Streaming generator
-    # ------------------------------------------------------------------
-
-    def _stream(self, payload: dict) -> Iterator[str]:
         # tool_use comes before tool_result; buffer name+args until result arrives.
         tool_pending: Dict[str, Dict[str, str]] = {}
 
-        url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
-        timeout = httpx.Timeout(
-            connect=30.0,
-            read=float(self.valves.TIMEOUT),
-            write=30.0,
-            pool=30.0,
-        )
         try:
-            with httpx.Client(timeout=timeout) as client:
-                with client.stream(
-                    "POST",
-                    url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                ) as resp:
-                    if resp.status_code != 200:
-                        body_text = resp.read().decode("utf-8", errors="replace")
-                        log.error(
-                            "[MINIMAL] gateway returned %s: %s",
-                            resp.status_code, body_text[:500],
+            with httpx.stream(
+                "POST",
+                f"{self.valves.BASE_URL}/v1/responses",
+                json=payload,
+                timeout=self.valves.TIMEOUT,
+                headers={"Accept": "text/event-stream"},
+            ) as resp:
+                if resp.status_code != 200:
+                    body_text = resp.read().decode("utf-8", errors="replace")
+                    log.error("[MINIMAL] gateway returned %s: %s", resp.status_code, body_text[:500])
+                    yield f"\n[gateway error {resp.status_code}] {body_text[:500]}\n"
+                    return
+
+                event_name: Optional[str] = None
+                for raw_line in resp.iter_lines():
+                    if raw_line is None:
+                        continue
+                    line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
+                    if not line:
+                        event_name = None
+                        continue
+                    if line.startswith("event:"):
+                        event_name = line[len("event:"):].strip()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if data_str in ("", "[DONE]"):
+                        continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    chunk_type = chunk.get("type") or event_name
+
+                    if self.valves.DEBUG_RAW:
+                        payload_str = json.dumps(
+                            {"event": event_name, "chunk": chunk},
+                            ensure_ascii=False,
                         )
-                        yield f"\n[gateway error {resp.status_code}] {body_text[:500]}\n"
-                        return
+                        if len(payload_str) > 2000:
+                            payload_str = payload_str[:2000] + "...(truncated)"
+                        yield f"\n```json\n{payload_str}\n```\n"
+                        continue
 
-                    current_event_type = ""
-                    for line in resp.iter_lines():
-                        # SSE keepalive comments
-                        if line.startswith(":"):
-                            continue
-                        # Event type line
-                        if line.startswith("event: "):
-                            current_event_type = line[7:].strip()
-                            continue
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            event = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
+                    if chunk_type == "response.output_text.delta":
+                        delta = chunk.get("delta", "")
+                        if isinstance(delta, str) and delta:
+                            yield delta
+                        continue
 
-                        event_type = event.get("type", current_event_type)
+                    if chunk_type == "response.tool_use":
+                        tool_id = chunk.get("tool_use_id") or chunk.get("id") or ""
+                        if tool_id:
+                            tool_pending[tool_id] = {
+                                "name": chunk.get("name", ""),
+                                "args": json.dumps(
+                                    chunk.get("input", chunk.get("arguments", {})),
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        continue
 
-                        if self.valves.DEBUG_RAW:
-                            payload_str = json.dumps(
-                                {"event": current_event_type, "chunk": event},
-                                ensure_ascii=False,
-                            )
-                            if len(payload_str) > 2000:
-                                payload_str = payload_str[:2000] + "...(truncated)"
-                            yield f"\n```json\n{payload_str}\n```\n"
-                            continue
+                    if chunk_type == "response.tool_result":
+                        rendered = self._render_tool_result(chunk, tool_pending)
+                        if rendered:
+                            yield rendered
+                        continue
 
-                        if event_type == "response.completed":
-                            continue
+                    if chunk_type == "response.task_started":
+                        rendered = self._render_task_started(chunk)
+                        if rendered:
+                            yield rendered
+                        continue
 
-                        if event_type == "response.failed":
-                            err = event.get("response", {}).get("error", {})
-                            err_msg = err.get("message", "Unknown error")
-                            yield f"\n\nError: {err_msg}"
-                            continue
+                    if chunk_type == "response.task_progress":
+                        rendered = self._render_task_progress(chunk)
+                        if rendered:
+                            yield rendered
+                        continue
 
-                        # Skip non-content lifecycle events.
-                        if event_type in (
-                            "response.created", "response.in_progress",
-                            "response.output_item.added", "response.output_item.done",
-                            "response.content_part.added", "response.content_part.done",
-                            "response.output_text.done",
-                        ):
-                            continue
+                    if chunk_type == "response.task_notification":
+                        rendered = self._render_task_notification(chunk)
+                        if rendered:
+                            yield rendered
+                        continue
 
-                        if event_type == "response.tool_use":
-                            tool_id = event.get("tool_use_id") or event.get("id") or ""
-                            if tool_id:
-                                tool_pending[tool_id] = {
-                                    "name": event.get("name", ""),
-                                    "args": json.dumps(
-                                        event.get("input", event.get("arguments", {})),
-                                        ensure_ascii=False,
-                                    ),
-                                }
-                            continue
-
-                        if event_type == "response.tool_result":
-                            rendered = self._render_tool_result(event, tool_pending)
-                            if rendered:
-                                yield rendered
-                            continue
-
-                        if event_type == "response.task_started":
-                            rendered = self._render_task_started(event)
-                            if rendered:
-                                yield rendered
-                            continue
-
-                        if event_type == "response.task_progress":
-                            rendered = self._render_task_progress(event)
-                            if rendered:
-                                yield rendered
-                            continue
-
-                        if event_type == "response.task_notification":
-                            rendered = self._render_task_notification(event)
-                            if rendered:
-                                yield rendered
-                            continue
-
-                        # Text delta — the main streaming path. Yield the raw
-                        # delta so each token surfaces independently.
-                        if event_type != "response.output_text.delta":
-                            continue
-                        chunk = event.get("delta", "")
-                        if not chunk:
-                            continue
-                        yield chunk
+                    if chunk_type in ("response.failed", "response.error"):
+                        yield f"\n[gateway: {chunk_type}] {json.dumps(chunk, ensure_ascii=False)[:500]}\n"
+                        continue
         except httpx.HTTPError as e:
             log.exception("[MINIMAL] gateway call failed")
             yield f"\n[transport error] {e!s}\n"
