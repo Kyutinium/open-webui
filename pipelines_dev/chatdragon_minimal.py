@@ -27,6 +27,7 @@ license: MIT
 import html
 import json
 import logging
+import time
 from typing import Any, Dict, Iterator, Optional
 
 import httpx
@@ -260,6 +261,18 @@ class Pipeline:
                         delta = chunk.get("delta", "")
                         if isinstance(delta, str) and delta:
                             yield delta
+                            # Open WebUI runs sync pipe() in a thread executor
+                            # and pushes each yield onto an asyncio queue. A
+                            # too-fast generator fills that queue before the
+                            # event loop gets to flush HTTP chunks to the
+                            # client, so deltas arrive in visible bursts. The
+                            # feature-rich pipe avoids this incidentally by
+                            # doing extra per-delta work (regex tool-noise
+                            # filter, string accumulation). A bare sleep(0)
+                            # achieves the same — releases the GIL and lets
+                            # the asyncio loop ship the chunk before we yield
+                            # the next one.
+                            time.sleep(0)
                         continue
 
                     if chunk_type == "response.tool_use":
