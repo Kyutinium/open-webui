@@ -1,26 +1,25 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.4.0
+version: 0.5.0
 description: |
-    Bare-minimum /v1/responses pipe for diagnosing why feature-rich
-    pipes break subagent output.
+    Bare-minimum /v1/responses pipe used to diagnose where the
+    feature-rich chatdragon_responses_* pipes inject behavior that
+    breaks subagent output. Layered incrementally so each feature
+    added back is its own commit:
 
-    Refactor v0.4.0: split pipe() (regular function returning a
-    generator) from _stream() (the actual generator). Matches the
-    structural shape Open WebUI's pipelines container uses to
-    dispatch streaming pipes — pipe() being a generator function
-    directly was routing this through a different code path with
-    visibly worse output buffering.
+      v0.1.0  text-only forwarding (response.output_text.delta)
+      v0.2.0  + tool_use / tool_result / task_* rendering
+      v0.3.0  + previous_response_id chaining per chat_id
+      v0.5.0  cleanup pass
 
-    Carries forward from v0.3.0:
-    - tool_use/tool_result + task_* rendering
-    - previous_response_id chaining per chat_id, skipped on
-      metadata.task (title gen / follow-up)
-    - DEBUG_RAW=true dumps every SSE chunk
+    Still omits: allowed_tools, instructions, context injection
+    (mlm_username / dscrowd token), MEMORY.md guidance,
+    thought_wrapped / <response> token, user identity.
 
-    Still omits: allowed_tools, instructions, context injection,
-    MEMORY.md / <response> guidance, thought_wrapped, user id.
+    DEBUG_RAW=true dumps every SSE chunk as JSON instead of
+    rendering — useful when chunk timing / shape is what you want
+    to inspect.
 license: MIT
 """
 
@@ -148,12 +147,7 @@ class Pipeline:
         )
 
     # ------------------------------------------------------------------
-    # Pipe entry point — must be a plain function returning a generator
-    # so Open WebUI dispatches it through the streaming code path. If
-    # pipe() itself is a generator function, isgeneratorfunction()
-    # detects it and the framework routes through a different (buffer-
-    # heavier) wrapper, which is why the v0.3.0 yield-direct pipe was
-    # visibly chunkier than the feature-rich pipe in default mode.
+    # Pipe entry point
     # ------------------------------------------------------------------
 
     def pipe(
@@ -256,16 +250,6 @@ class Pipeline:
                             continue
 
                         event_type = event.get("type", current_event_type)
-                        # Per-event log.info on purpose: logging acquires its
-                        # internal lock + formats + writes through handlers, all
-                        # of which release the GIL. That gap is what lets Open
-                        # WebUI's asyncio loop ship the previous yield to the
-                        # client before the next one piles into the queue. The
-                        # feature-rich pipe gets this for free from its own
-                        # [PIPE-DEBUG] line; without something equivalent the
-                        # sync generator races ahead and the frontend renders
-                        # in bursts.
-                        log.info("[MINIMAL] event_type=%s", event_type)
 
                         if self.valves.DEBUG_RAW:
                             payload_str = json.dumps(
