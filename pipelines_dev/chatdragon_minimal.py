@@ -68,17 +68,19 @@ class Pipeline:
         )
 
     def __init__(self) -> None:
-        self.type = "manifold"
-        self.id = "chatdragon_minimal"
-        self.name = "chatdragon/"
         self.valves = self.Valves()
         # chat_id → last response_id captured from response.completed.
         # In-memory only; multi-worker deployments would need a shared
         # store but that's out of scope for a diagnostic pipe.
         self._response_ids: Dict[str, str] = {}
 
-    def pipelines(self) -> list[dict]:
-        return [{"id": "minimal", "name": "minimal"}]
+    def pipes(self) -> list[dict]:
+        return [
+            {
+                "id": "chatdragon-minimal",
+                "name": "ChatDragon Minimal (diagnostic)",
+            }
+        ]
 
     # ------------------------------------------------------------------
     # Event renderers
