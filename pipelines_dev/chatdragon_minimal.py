@@ -256,6 +256,16 @@ class Pipeline:
                             continue
 
                         event_type = event.get("type", current_event_type)
+                        # Per-event log.info on purpose: logging acquires its
+                        # internal lock + formats + writes through handlers, all
+                        # of which release the GIL. That gap is what lets Open
+                        # WebUI's asyncio loop ship the previous yield to the
+                        # client before the next one piles into the queue. The
+                        # feature-rich pipe gets this for free from its own
+                        # [PIPE-DEBUG] line; without something equivalent the
+                        # sync generator races ahead and the frontend renders
+                        # in bursts.
+                        log.info("[MINIMAL] event_type=%s", event_type)
 
                         if self.valves.DEBUG_RAW:
                             payload_str = json.dumps(
