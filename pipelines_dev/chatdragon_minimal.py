@@ -176,13 +176,23 @@ class Pipeline:
         # tool_use comes before tool_result; buffer name+args until result arrives.
         tool_pending: Dict[str, Dict[str, str]] = {}
 
+        # Use a persistent client with per-phase timeouts so the read phase can
+        # block on the long-tailed SSE stream without idle disconnects, while
+        # connect/write/pool stay snappy. Matches the streaming behavior of the
+        # feature-rich pipe — bare httpx.stream() sometimes buffers larger
+        # chunks before the first iter_lines() yield.
+        timeout = httpx.Timeout(
+            connect=30.0,
+            read=float(self.valves.TIMEOUT),
+            write=30.0,
+            pool=30.0,
+        )
         try:
-            with httpx.stream(
+            with httpx.Client(timeout=timeout) as client, client.stream(
                 "POST",
                 f"{self.valves.BASE_URL}/v1/responses",
                 json=payload,
-                timeout=self.valves.TIMEOUT,
-                headers={"Accept": "text/event-stream"},
+                headers={"Content-Type": "application/json"},
             ) as resp:
                 if resp.status_code != 200:
                     body_text = resp.read().decode("utf-8", errors="replace")
