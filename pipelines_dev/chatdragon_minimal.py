@@ -1,22 +1,24 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.2.0
+version: 0.3.0
 description: |
     Bare-minimum /v1/responses pipe for diagnosing why feature-rich
     pipes break subagent output.
 
-    Adds tool/task rendering on top of v0.1.0:
-    - response.tool_use     → buffered; rendered alongside tool_result
-    - response.tool_result  → <details type="tool_calls"> block (Open WebUI
-                              renders the native tool widget) with name +
-                              args + truncated result
-    - response.task_started / task_progress / task_notification
-                            → blockquote status lines (subagent lifecycle)
+    Adds previous_response_id chaining on top of v0.2.0:
+    - Captures response.id from response.completed events.
+    - Sends payload["previous_response_id"] on subsequent turns of
+      the same chat so the gateway reuses the session (and the
+      orchestrator's accumulated context / workspace).
+    - Skips chaining when metadata.task is set (title generation,
+      follow-up suggestions, etc.) — those one-shot calls should
+      not advance the chat's response counter.
+    - No 409 stale recovery (deliberately omitted — if the bisect
+      shows chaining breaks subagents, that's our answer).
 
-    Still omits everything else: no allowed_tools, no instructions,
-    no context injection, no MEMORY.md / <response> guidance, no
-    thought_wrapped, no previous_response_id chaining.
+    Still omits: allowed_tools, instructions, context injection,
+    MEMORY.md / <response> guidance, thought_wrapped, user id.
 
     DEBUG_RAW=true to dump every SSE chunk as JSON instead.
 license: MIT
@@ -70,6 +72,10 @@ class Pipeline:
         self.id = "chatdragon_minimal"
         self.name = "chatdragon/"
         self.valves = self.Valves()
+        # chat_id → last response_id captured from response.completed.
+        # In-memory only; multi-worker deployments would need a shared
+        # store but that's out of scope for a diagnostic pipe.
+        self._response_ids: Dict[str, str] = {}
 
     def pipelines(self) -> list[dict]:
         return [{"id": "minimal", "name": "minimal"}]
@@ -151,6 +157,10 @@ class Pipeline:
         messages: list[dict],
         body: dict,
     ) -> Iterator[str]:
+        metadata = body.get("metadata") or {}
+        chat_id = metadata.get("chat_id", "") or ""
+        task = metadata.get("task")  # title-gen / follow-up etc.
+
         last_user_content = user_message
         for m in reversed(messages):
             if m.get("role") == "user":
@@ -171,7 +181,18 @@ class Pipeline:
             "stream": True,
         }
 
-        log.info("[MINIMAL] POST %s/v1/responses payload=%s", self.valves.BASE_URL, payload)
+        # Chain to the previous response for multi-turn continuity, but
+        # only for real chat turns — title/follow-up tasks share the
+        # chat_id and would otherwise advance the response counter,
+        # leaving the next user turn with a stale previous_response_id.
+        prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
+        if prev_resp_id and not task:
+            payload["previous_response_id"] = prev_resp_id
+
+        log.info(
+            "[MINIMAL] POST %s/v1/responses chat_id=%s prev=%s task=%s payload=%s",
+            self.valves.BASE_URL, chat_id, prev_resp_id, task, payload,
+        )
 
         # tool_use comes before tool_result; buffer name+args until result arrives.
         tool_pending: Dict[str, Dict[str, str]] = {}
@@ -273,6 +294,21 @@ class Pipeline:
                         rendered = self._render_task_notification(chunk)
                         if rendered:
                             yield rendered
+                        continue
+
+                    if chunk_type == "response.completed":
+                        # Capture the final response id so the next turn on
+                        # this chat can chain via previous_response_id.
+                        # Skip task calls — they share the chat_id and would
+                        # poison the chain.
+                        if chat_id and not task:
+                            new_id = (chunk.get("response") or {}).get("id")
+                            if new_id:
+                                self._response_ids[chat_id] = new_id
+                                log.info(
+                                    "[MINIMAL] captured response_id=%s for chat=%s",
+                                    new_id, chat_id,
+                                )
                         continue
 
                     if chunk_type in ("response.failed", "response.error"):
