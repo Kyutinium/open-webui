@@ -1,48 +1,33 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.2.0
+version: 0.1.0
 description: |
     Bare-minimum /v1/responses pipe for diagnosing why feature-rich
     pipes break subagent output.
 
-    Adds tool/task rendering on top of v0.1.0:
-    - response.tool_use     → buffered; rendered alongside tool_result
-    - response.tool_result  → <details type="tool_calls"> block (Open WebUI
-                              renders the native tool widget) with name +
-                              args + truncated result
-    - response.task_started / task_progress / task_notification
-                            → blockquote status lines (subagent lifecycle)
+    Does NOTHING except forward the user message to the gateway and
+    stream `response.output_text.delta` text back. No allowed_tools,
+    no instructions, no context injection, no MEMORY.md, no
+    thought_wrapped, no tool rendering, no previous_response_id.
 
-    Still omits everything else: no allowed_tools, no instructions,
-    no context injection, no MEMORY.md / <response> guidance, no
-    thought_wrapped, no previous_response_id chaining.
+    DEBUG_RAW=true to dump every SSE chunk as a fenced JSON block
+    instead of streaming text (useful when subagents still fail —
+    you see exactly what the gateway emits).
 
-    DEBUG_RAW=true to dump every SSE chunk as JSON instead.
+    If subagents work here but not in chatdragon_responses_*, the
+    breaking feature is one of the things this pipe omits.
 license: MIT
 """
 
-import html
 import json
 import logging
-from typing import Any, Dict, Iterator, Optional
+from typing import Iterator, Optional
 
 import httpx
 from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
-
-
-def _safe_attr(value: str) -> str:
-    """Sanitize for a double-quoted HTML attribute value."""
-    return (
-        value.replace("&", "+")
-        .replace('"', "'")
-        .replace("<", "[")
-        .replace(">", "]")
-        .replace("\n", " ")
-        .replace("\r", "")
-    )
 
 
 class Pipeline:
@@ -58,11 +43,7 @@ class Pipeline:
         TIMEOUT: int = Field(default=600)
         DEBUG_RAW: bool = Field(
             default=False,
-            description="Dump every SSE chunk as JSON instead of rendering",
-        )
-        TOOL_RESULT_LIMIT: int = Field(
-            default=10000,
-            description="Max chars of tool_result content rendered into the details block",
+            description="Dump every SSE chunk as JSON instead of streaming text",
         )
 
     def __init__(self) -> None:
@@ -73,76 +54,6 @@ class Pipeline:
 
     def pipelines(self) -> list[dict]:
         return [{"id": "minimal", "name": "minimal"}]
-
-    # ------------------------------------------------------------------
-    # Event renderers
-    # ------------------------------------------------------------------
-
-    def _render_task_started(self, chunk: Dict[str, Any]) -> Optional[str]:
-        desc = chunk.get("description", "")
-        if not desc:
-            return None
-        return f"\n\n> **Task**: {desc}\n"
-
-    def _render_task_progress(self, chunk: Dict[str, Any]) -> Optional[str]:
-        desc = chunk.get("description", "")
-        tool = chunk.get("last_tool_name", "")
-        usage = chunk.get("usage") or {}
-        uses = usage.get("tool_uses", 0)
-        text = f"\n> **Progress**: {desc}"
-        if tool:
-            text += f" ({tool}, {uses} uses)"
-        return text + "\n"
-
-    def _render_task_notification(self, chunk: Dict[str, Any]) -> Optional[str]:
-        status = chunk.get("status", "")
-        summary = chunk.get("summary", "")
-        if not summary:
-            return None
-        return f"\n> **Task {status}**: {summary}\n\n"
-
-    def _render_tool_result(
-        self,
-        chunk: Dict[str, Any],
-        pending: Dict[str, Dict[str, str]],
-    ) -> Optional[str]:
-        tool_id = chunk.get("tool_use_id", "")
-        meta = pending.pop(tool_id, {})
-        name = meta.get("name", "")
-        args = meta.get("args", "{}")
-        is_error = bool(chunk.get("is_error", False))
-        raw_content = chunk.get("content", "") or ""
-        if isinstance(raw_content, list):
-            # MCP results often arrive as [{"type": "text", "text": "..."}]
-            parts = []
-            for p in raw_content:
-                if isinstance(p, dict):
-                    parts.append(p.get("text", "") or json.dumps(p, ensure_ascii=False))
-                else:
-                    parts.append(str(p))
-            raw_content = "\n".join(parts)
-        elif not isinstance(raw_content, str):
-            raw_content = json.dumps(raw_content, ensure_ascii=False)
-        if not raw_content and is_error:
-            raw_content = chunk.get("error", "Tool execution failed")
-        raw_content = raw_content[: self.valves.TOOL_RESULT_LIMIT]
-
-        esc_name = html.escape(name or "tool")
-        safe_args = _safe_attr(args)
-        safe_result = _safe_attr(raw_content)
-        return (
-            f'\n\n<details type="tool_calls"'
-            f' name="{esc_name}"'
-            f' arguments="{safe_args}"'
-            f' result="{safe_result}"'
-            f' done="true">\n'
-            f"<summary>Tool: {esc_name}</summary>\n"
-            f"</details>\n\n"
-        )
-
-    # ------------------------------------------------------------------
-    # Pipe entry point
-    # ------------------------------------------------------------------
 
     def pipe(
         self,
@@ -172,9 +83,6 @@ class Pipeline:
         }
 
         log.info("[MINIMAL] POST %s/v1/responses payload=%s", self.valves.BASE_URL, payload)
-
-        # tool_use comes before tool_result; buffer name+args until result arrives.
-        tool_pending: Dict[str, Dict[str, str]] = {}
 
         try:
             with httpx.stream(
@@ -214,6 +122,7 @@ class Pipeline:
                     chunk_type = chunk.get("type") or event_name
 
                     if self.valves.DEBUG_RAW:
+                        # Dump everything; truncate giant chunks.
                         payload_str = json.dumps(
                             {"event": event_name, "chunk": chunk},
                             ensure_ascii=False,
@@ -223,48 +132,14 @@ class Pipeline:
                         yield f"\n```json\n{payload_str}\n```\n"
                         continue
 
+                    # Text delta — the main stream of model output.
                     if chunk_type == "response.output_text.delta":
                         delta = chunk.get("delta", "")
                         if isinstance(delta, str) and delta:
                             yield delta
                         continue
 
-                    if chunk_type == "response.tool_use":
-                        tool_id = chunk.get("tool_use_id") or chunk.get("id") or ""
-                        if tool_id:
-                            tool_pending[tool_id] = {
-                                "name": chunk.get("name", ""),
-                                "args": json.dumps(
-                                    chunk.get("input", chunk.get("arguments", {})),
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        continue
-
-                    if chunk_type == "response.tool_result":
-                        rendered = self._render_tool_result(chunk, tool_pending)
-                        if rendered:
-                            yield rendered
-                        continue
-
-                    if chunk_type == "response.task_started":
-                        rendered = self._render_task_started(chunk)
-                        if rendered:
-                            yield rendered
-                        continue
-
-                    if chunk_type == "response.task_progress":
-                        rendered = self._render_task_progress(chunk)
-                        if rendered:
-                            yield rendered
-                        continue
-
-                    if chunk_type == "response.task_notification":
-                        rendered = self._render_task_notification(chunk)
-                        if rendered:
-                            yield rendered
-                        continue
-
+                    # Surface failures inline so we don't fail silently.
                     if chunk_type in ("response.failed", "response.error"):
                         yield f"\n[gateway: {chunk_type}] {json.dumps(chunk, ensure_ascii=False)[:500]}\n"
                         continue
