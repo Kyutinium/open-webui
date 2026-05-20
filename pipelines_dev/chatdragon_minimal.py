@@ -1,7 +1,7 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.6.0
+version: 0.7.0
 description: |
     Bare-minimum /v1/responses pipe used to diagnose where the
     feature-rich chatdragon_responses_* pipes inject behavior that
@@ -12,12 +12,18 @@ description: |
       v0.2.0  + tool_use / tool_result / task_* rendering
       v0.3.0  + previous_response_id chaining per chat_id
       v0.5.0  cleanup pass
-      v0.6.0  + payload.user = body.user.email's local-part
-              (per-user workspace isolation on the gateway)
+      v0.6.0  + payload.user (workspace isolation)
+      v0.7.0  rollback to v0.2.0 functionality — drop user and
+              previous_response_id so we can re-isolate which
+              addition is making subagents return empty. The
+              streaming-correct refactor (pipe() returns
+              _stream(), persistent httpx client, pipes()
+              registration) is kept.
 
-    Still omits: allowed_tools, instructions, context injection
-    (mlm_username / dscrowd token), MEMORY.md guidance,
-    thought_wrapped / <response> token, user identity.
+    Currently omits: allowed_tools, instructions, context
+    injection (mlm_username / dscrowd token), MEMORY.md guidance,
+    thought_wrapped / <response> token, user identity,
+    previous_response_id chaining.
 
     DEBUG_RAW=true dumps every SSE chunk as JSON instead of
     rendering — useful when chunk timing / shape is what you want
@@ -70,10 +76,6 @@ class Pipeline:
 
     def __init__(self) -> None:
         self.valves = self.Valves()
-        # chat_id → last response_id captured from response.completed.
-        # In-memory only; multi-worker deployments would need a shared
-        # store but that's out of scope for a diagnostic pipe.
-        self._response_ids: Dict[str, str] = {}
 
     def pipes(self) -> list[dict]:
         return [
@@ -159,21 +161,6 @@ class Pipeline:
         messages: list,
         body: dict,
     ):
-        metadata = body.get("metadata") or {}
-        chat_id = metadata.get("chat_id", "") or ""
-        task = metadata.get("task")  # title-gen / follow-up etc.
-
-        # Open WebUI passes the signed-in user object as body.user. The
-        # gateway uses payload.user to key per-user workspace isolation
-        # (/tmp/workspaces/<user>/<backend>/) so deriving a stable id
-        # from the email's local part matches what the feature-rich pipe
-        # does and what the gateway expects.
-        owui_user = body.get("user") or {}
-        owui_username = ""
-        email = owui_user.get("email", "") if isinstance(owui_user, dict) else ""
-        if email:
-            owui_username = email.split("@", 1)[0] if "@" in email else email
-
         last_user_content = user_message
         for m in reversed(messages):
             if m.get("role") == "user":
@@ -194,31 +181,15 @@ class Pipeline:
             "stream": True,
         }
 
-        if owui_username:
-            payload["user"] = owui_username
+        log.info("[MINIMAL] POST %s/v1/responses payload=%s", self.valves.BASE_URL, payload)
 
-        prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
-        if prev_resp_id and not task:
-            payload["previous_response_id"] = prev_resp_id
-
-        log.info(
-            "[MINIMAL] POST %s/v1/responses chat_id=%s user=%s prev=%s task=%s payload=%s",
-            self.valves.BASE_URL, chat_id, owui_username, prev_resp_id, task, payload,
-        )
-
-        return self._stream(payload, chat_id=chat_id, task=task)
+        return self._stream(payload)
 
     # ------------------------------------------------------------------
     # Streaming generator
     # ------------------------------------------------------------------
 
-    def _stream(
-        self,
-        payload: dict,
-        *,
-        chat_id: str = "",
-        task: Optional[str] = None,
-    ) -> Iterator[str]:
+    def _stream(self, payload: dict) -> Iterator[str]:
         # tool_use comes before tool_result; buffer name+args until result arrives.
         tool_pending: Dict[str, Dict[str, str]] = {}
 
@@ -277,17 +248,7 @@ class Pipeline:
                             yield f"\n```json\n{payload_str}\n```\n"
                             continue
 
-                        # Capture response_id from response.completed (chat
-                        # turns only — task one-shots would advance counter).
                         if event_type == "response.completed":
-                            if chat_id and not task:
-                                new_id = (event.get("response") or {}).get("id")
-                                if new_id:
-                                    self._response_ids[chat_id] = new_id
-                                    log.info(
-                                        "[MINIMAL] saved response_id=%s for chat=%s",
-                                        new_id, chat_id,
-                                    )
                             continue
 
                         if event_type == "response.failed":
