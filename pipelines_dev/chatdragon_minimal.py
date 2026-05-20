@@ -1,7 +1,7 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.5.0
+version: 0.6.0
 description: |
     Bare-minimum /v1/responses pipe used to diagnose where the
     feature-rich chatdragon_responses_* pipes inject behavior that
@@ -12,6 +12,8 @@ description: |
       v0.2.0  + tool_use / tool_result / task_* rendering
       v0.3.0  + previous_response_id chaining per chat_id
       v0.5.0  cleanup pass
+      v0.6.0  + payload.user = body.user.email's local-part
+              (per-user workspace isolation on the gateway)
 
     Still omits: allowed_tools, instructions, context injection
     (mlm_username / dscrowd token), MEMORY.md guidance,
@@ -161,6 +163,17 @@ class Pipeline:
         chat_id = metadata.get("chat_id", "") or ""
         task = metadata.get("task")  # title-gen / follow-up etc.
 
+        # Open WebUI passes the signed-in user object as body.user. The
+        # gateway uses payload.user to key per-user workspace isolation
+        # (/tmp/workspaces/<user>/<backend>/) so deriving a stable id
+        # from the email's local part matches what the feature-rich pipe
+        # does and what the gateway expects.
+        owui_user = body.get("user") or {}
+        owui_username = ""
+        email = owui_user.get("email", "") if isinstance(owui_user, dict) else ""
+        if email:
+            owui_username = email.split("@", 1)[0] if "@" in email else email
+
         last_user_content = user_message
         for m in reversed(messages):
             if m.get("role") == "user":
@@ -181,13 +194,16 @@ class Pipeline:
             "stream": True,
         }
 
+        if owui_username:
+            payload["user"] = owui_username
+
         prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
         if prev_resp_id and not task:
             payload["previous_response_id"] = prev_resp_id
 
         log.info(
-            "[MINIMAL] POST %s/v1/responses chat_id=%s prev=%s task=%s payload=%s",
-            self.valves.BASE_URL, chat_id, prev_resp_id, task, payload,
+            "[MINIMAL] POST %s/v1/responses chat_id=%s user=%s prev=%s task=%s payload=%s",
+            self.valves.BASE_URL, chat_id, owui_username, prev_resp_id, task, payload,
         )
 
         return self._stream(payload, chat_id=chat_id, task=task)
