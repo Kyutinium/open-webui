@@ -1,33 +1,32 @@
 """
 title: ChatDragon Minimal (diagnostic)
 author: claude-code-openai-wrapper
-version: 0.3.0
+version: 0.4.0
 description: |
     Bare-minimum /v1/responses pipe for diagnosing why feature-rich
     pipes break subagent output.
 
-    Adds previous_response_id chaining on top of v0.2.0:
-    - Captures response.id from response.completed events.
-    - Sends payload["previous_response_id"] on subsequent turns of
-      the same chat so the gateway reuses the session (and the
-      orchestrator's accumulated context / workspace).
-    - Skips chaining when metadata.task is set (title generation,
-      follow-up suggestions, etc.) — those one-shot calls should
-      not advance the chat's response counter.
-    - No 409 stale recovery (deliberately omitted — if the bisect
-      shows chaining breaks subagents, that's our answer).
+    Refactor v0.4.0: split pipe() (regular function returning a
+    generator) from _stream() (the actual generator). Matches the
+    structural shape Open WebUI's pipelines container uses to
+    dispatch streaming pipes — pipe() being a generator function
+    directly was routing this through a different code path with
+    visibly worse output buffering.
+
+    Carries forward from v0.3.0:
+    - tool_use/tool_result + task_* rendering
+    - previous_response_id chaining per chat_id, skipped on
+      metadata.task (title gen / follow-up)
+    - DEBUG_RAW=true dumps every SSE chunk
 
     Still omits: allowed_tools, instructions, context injection,
     MEMORY.md / <response> guidance, thought_wrapped, user id.
-
-    DEBUG_RAW=true to dump every SSE chunk as JSON instead.
 license: MIT
 """
 
 import html
 import json
 import logging
-import time
 from typing import Any, Dict, Iterator, Optional
 
 import httpx
@@ -122,7 +121,6 @@ class Pipeline:
         is_error = bool(chunk.get("is_error", False))
         raw_content = chunk.get("content", "") or ""
         if isinstance(raw_content, list):
-            # MCP results often arrive as [{"type": "text", "text": "..."}]
             parts = []
             for p in raw_content:
                 if isinstance(p, dict):
@@ -150,16 +148,21 @@ class Pipeline:
         )
 
     # ------------------------------------------------------------------
-    # Pipe entry point
+    # Pipe entry point — must be a plain function returning a generator
+    # so Open WebUI dispatches it through the streaming code path. If
+    # pipe() itself is a generator function, isgeneratorfunction()
+    # detects it and the framework routes through a different (buffer-
+    # heavier) wrapper, which is why the v0.3.0 yield-direct pipe was
+    # visibly chunkier than the feature-rich pipe in default mode.
     # ------------------------------------------------------------------
 
     def pipe(
         self,
         user_message: str,
         model_id: str,
-        messages: list[dict],
+        messages: list,
         body: dict,
-    ) -> Iterator[str]:
+    ):
         metadata = body.get("metadata") or {}
         chat_id = metadata.get("chat_id", "") or ""
         task = metadata.get("task")  # title-gen / follow-up etc.
@@ -184,10 +187,6 @@ class Pipeline:
             "stream": True,
         }
 
-        # Chain to the previous response for multi-turn continuity, but
-        # only for real chat turns — title/follow-up tasks share the
-        # chat_id and would otherwise advance the response counter,
-        # leaving the next user turn with a stale previous_response_id.
         prev_resp_id = self._response_ids.get(chat_id) if chat_id else None
         if prev_resp_id and not task:
             payload["previous_response_id"] = prev_resp_id
@@ -197,14 +196,23 @@ class Pipeline:
             self.valves.BASE_URL, chat_id, prev_resp_id, task, payload,
         )
 
+        return self._stream(payload, chat_id=chat_id, task=task)
+
+    # ------------------------------------------------------------------
+    # Streaming generator
+    # ------------------------------------------------------------------
+
+    def _stream(
+        self,
+        payload: dict,
+        *,
+        chat_id: str = "",
+        task: Optional[str] = None,
+    ) -> Iterator[str]:
         # tool_use comes before tool_result; buffer name+args until result arrives.
         tool_pending: Dict[str, Dict[str, str]] = {}
 
-        # Use a persistent client with per-phase timeouts so the read phase can
-        # block on the long-tailed SSE stream without idle disconnects, while
-        # connect/write/pool stay snappy. Matches the streaming behavior of the
-        # feature-rich pipe — bare httpx.stream() sometimes buffers larger
-        # chunks before the first iter_lines() yield.
+        url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
         timeout = httpx.Timeout(
             connect=30.0,
             read=float(self.valves.TIMEOUT),
@@ -212,123 +220,125 @@ class Pipeline:
             pool=30.0,
         )
         try:
-            with httpx.Client(timeout=timeout) as client, client.stream(
-                "POST",
-                f"{self.valves.BASE_URL}/v1/responses",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                if resp.status_code != 200:
-                    body_text = resp.read().decode("utf-8", errors="replace")
-                    log.error("[MINIMAL] gateway returned %s: %s", resp.status_code, body_text[:500])
-                    yield f"\n[gateway error {resp.status_code}] {body_text[:500]}\n"
-                    return
-
-                event_name: Optional[str] = None
-                for raw_line in resp.iter_lines():
-                    if raw_line is None:
-                        continue
-                    line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
-                    if not line:
-                        event_name = None
-                        continue
-                    if line.startswith("event:"):
-                        event_name = line[len("event:"):].strip()
-                        continue
-                    if not line.startswith("data:"):
-                        continue
-                    data_str = line[len("data:"):].strip()
-                    if data_str in ("", "[DONE]"):
-                        continue
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-
-                    chunk_type = chunk.get("type") or event_name
-
-                    if self.valves.DEBUG_RAW:
-                        payload_str = json.dumps(
-                            {"event": event_name, "chunk": chunk},
-                            ensure_ascii=False,
+            with httpx.Client(timeout=timeout) as client:
+                with client.stream(
+                    "POST",
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                ) as resp:
+                    if resp.status_code != 200:
+                        body_text = resp.read().decode("utf-8", errors="replace")
+                        log.error(
+                            "[MINIMAL] gateway returned %s: %s",
+                            resp.status_code, body_text[:500],
                         )
-                        if len(payload_str) > 2000:
-                            payload_str = payload_str[:2000] + "...(truncated)"
-                        yield f"\n```json\n{payload_str}\n```\n"
-                        continue
+                        yield f"\n[gateway error {resp.status_code}] {body_text[:500]}\n"
+                        return
 
-                    if chunk_type == "response.output_text.delta":
-                        delta = chunk.get("delta", "")
-                        if isinstance(delta, str) and delta:
-                            yield delta
-                            # Open WebUI runs sync pipe() in a thread executor
-                            # and pushes each yield onto an asyncio queue. A
-                            # too-fast generator fills that queue before the
-                            # event loop gets to flush HTTP chunks to the
-                            # client, so deltas arrive in visible bursts. The
-                            # feature-rich pipe avoids this incidentally by
-                            # doing extra per-delta work (regex tool-noise
-                            # filter, string accumulation). A bare sleep(0)
-                            # achieves the same — releases the GIL and lets
-                            # the asyncio loop ship the chunk before we yield
-                            # the next one.
-                            time.sleep(0)
-                        continue
+                    current_event_type = ""
+                    for line in resp.iter_lines():
+                        # SSE keepalive comments
+                        if line.startswith(":"):
+                            continue
+                        # Event type line
+                        if line.startswith("event: "):
+                            current_event_type = line[7:].strip()
+                            continue
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str.strip() == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
 
-                    if chunk_type == "response.tool_use":
-                        tool_id = chunk.get("tool_use_id") or chunk.get("id") or ""
-                        if tool_id:
-                            tool_pending[tool_id] = {
-                                "name": chunk.get("name", ""),
-                                "args": json.dumps(
-                                    chunk.get("input", chunk.get("arguments", {})),
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        continue
+                        event_type = event.get("type", current_event_type)
 
-                    if chunk_type == "response.tool_result":
-                        rendered = self._render_tool_result(chunk, tool_pending)
-                        if rendered:
-                            yield rendered
-                        continue
+                        if self.valves.DEBUG_RAW:
+                            payload_str = json.dumps(
+                                {"event": current_event_type, "chunk": event},
+                                ensure_ascii=False,
+                            )
+                            if len(payload_str) > 2000:
+                                payload_str = payload_str[:2000] + "...(truncated)"
+                            yield f"\n```json\n{payload_str}\n```\n"
+                            continue
 
-                    if chunk_type == "response.task_started":
-                        rendered = self._render_task_started(chunk)
-                        if rendered:
-                            yield rendered
-                        continue
+                        # Capture response_id from response.completed (chat
+                        # turns only — task one-shots would advance counter).
+                        if event_type == "response.completed":
+                            if chat_id and not task:
+                                new_id = (event.get("response") or {}).get("id")
+                                if new_id:
+                                    self._response_ids[chat_id] = new_id
+                                    log.info(
+                                        "[MINIMAL] saved response_id=%s for chat=%s",
+                                        new_id, chat_id,
+                                    )
+                            continue
 
-                    if chunk_type == "response.task_progress":
-                        rendered = self._render_task_progress(chunk)
-                        if rendered:
-                            yield rendered
-                        continue
+                        if event_type == "response.failed":
+                            err = event.get("response", {}).get("error", {})
+                            err_msg = err.get("message", "Unknown error")
+                            yield f"\n\nError: {err_msg}"
+                            continue
 
-                    if chunk_type == "response.task_notification":
-                        rendered = self._render_task_notification(chunk)
-                        if rendered:
-                            yield rendered
-                        continue
+                        # Skip non-content lifecycle events.
+                        if event_type in (
+                            "response.created", "response.in_progress",
+                            "response.output_item.added", "response.output_item.done",
+                            "response.content_part.added", "response.content_part.done",
+                            "response.output_text.done",
+                        ):
+                            continue
 
-                    if chunk_type == "response.completed":
-                        # Capture the final response id so the next turn on
-                        # this chat can chain via previous_response_id.
-                        # Skip task calls — they share the chat_id and would
-                        # poison the chain.
-                        if chat_id and not task:
-                            new_id = (chunk.get("response") or {}).get("id")
-                            if new_id:
-                                self._response_ids[chat_id] = new_id
-                                log.info(
-                                    "[MINIMAL] captured response_id=%s for chat=%s",
-                                    new_id, chat_id,
-                                )
-                        continue
+                        if event_type == "response.tool_use":
+                            tool_id = event.get("tool_use_id") or event.get("id") or ""
+                            if tool_id:
+                                tool_pending[tool_id] = {
+                                    "name": event.get("name", ""),
+                                    "args": json.dumps(
+                                        event.get("input", event.get("arguments", {})),
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            continue
 
-                    if chunk_type in ("response.failed", "response.error"):
-                        yield f"\n[gateway: {chunk_type}] {json.dumps(chunk, ensure_ascii=False)[:500]}\n"
-                        continue
+                        if event_type == "response.tool_result":
+                            rendered = self._render_tool_result(event, tool_pending)
+                            if rendered:
+                                yield rendered
+                            continue
+
+                        if event_type == "response.task_started":
+                            rendered = self._render_task_started(event)
+                            if rendered:
+                                yield rendered
+                            continue
+
+                        if event_type == "response.task_progress":
+                            rendered = self._render_task_progress(event)
+                            if rendered:
+                                yield rendered
+                            continue
+
+                        if event_type == "response.task_notification":
+                            rendered = self._render_task_notification(event)
+                            if rendered:
+                                yield rendered
+                            continue
+
+                        # Text delta — the main streaming path. Yield the raw
+                        # delta so each token surfaces independently.
+                        if event_type != "response.output_text.delta":
+                            continue
+                        chunk = event.get("delta", "")
+                        if not chunk:
+                            continue
+                        yield chunk
         except httpx.HTTPError as e:
             log.exception("[MINIMAL] gateway call failed")
             yield f"\n[transport error] {e!s}\n"
