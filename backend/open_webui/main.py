@@ -384,6 +384,7 @@ from open_webui.config import (
     # WebUI
     WEBUI_AUTH,
     WEBUI_NAME,
+    DATA_PAGE_URL,
     WEBUI_BANNERS,
     WEBHOOK_URL,
     ADMIN_EMAIL,
@@ -2251,6 +2252,8 @@ async def get_app_config(request: Request):
                     'enable_calendar': app.state.config.ENABLE_CALENDAR,
                     'enable_automations': app.state.config.ENABLE_AUTOMATIONS,
                     'enable_notes': app.state.config.ENABLE_NOTES,
+                    'enable_data_page': bool(DATA_PAGE_URL),
+                    'data_page_url': DATA_PAGE_URL,
                     'enable_web_search': app.state.config.ENABLE_WEB_SEARCH,
                     'enable_code_execution': app.state.config.ENABLE_CODE_EXECUTION,
                     'enable_code_interpreter': app.state.config.ENABLE_CODE_INTERPRETER,
