@@ -311,6 +311,8 @@ type Config = {
 		enable_direct_connections: boolean;
 		enable_version_update_check: boolean;
 		folder_max_file_count?: number;
+		enable_data_page?: boolean;
+		data_page_url?: string;
 	};
 	oauth: {
 		providers: {
