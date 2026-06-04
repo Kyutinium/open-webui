@@ -384,7 +384,6 @@ from open_webui.config import (
     # WebUI
     WEBUI_AUTH,
     WEBUI_NAME,
-    DATA_PAGE_URL,
     WEBUI_BANNERS,
     WEBHOOK_URL,
     ADMIN_EMAIL,
@@ -490,6 +489,7 @@ from open_webui.config import (
 )
 from open_webui.env import (
     ENABLE_CUSTOM_MODEL_FALLBACK,
+    DATA_PAGE_URL,
     LICENSE_KEY,
     AUDIT_EXCLUDED_PATHS,
     AUDIT_INCLUDED_PATHS,
