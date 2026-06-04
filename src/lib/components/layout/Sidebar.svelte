@@ -935,7 +935,7 @@
 						<Tooltip content={$i18n.t('Data')} placement="right">
 							<a
 								class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
-								href={$config?.features?.data_page_url || '/data'}
+								href="/data"
 								target="_blank"
 								rel="noopener noreferrer"
 								draggable="false"
@@ -1216,7 +1216,7 @@
 							<a
 								id="sidebar-data-button"
 								class="grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
-								href={$config?.features?.data_page_url || '/data'}
+								href="/data"
 								target="_blank"
 								rel="noopener noreferrer"
 								draggable="false"
