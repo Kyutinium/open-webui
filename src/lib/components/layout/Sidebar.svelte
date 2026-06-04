@@ -931,12 +931,11 @@
 					{/if}
 				{/each}
 
-				{#if $config?.features?.data_page_url}
-					<div class="">
+				<div class="">
 						<Tooltip content={$i18n.t('Data')} placement="right">
 							<a
 								class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
-								href={$config?.features?.data_page_url}
+								href={$config?.features?.data_page_url || '/data'}
 								target="_blank"
 								rel="noopener noreferrer"
 								draggable="false"
@@ -961,7 +960,6 @@
 							</a>
 						</Tooltip>
 					</div>
-				{/if}
 			</div>
 		</button>
 
@@ -1214,12 +1212,11 @@
 						{/each}
 					</div>
 
-					{#if $config?.features?.data_page_url}
-						<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
+					<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
 							<a
 								id="sidebar-data-button"
 								class="grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
-								href={$config?.features?.data_page_url}
+								href={$config?.features?.data_page_url || '/data'}
 								target="_blank"
 								rel="noopener noreferrer"
 								draggable="false"
@@ -1247,7 +1244,6 @@
 								</div>
 							</a>
 						</div>
-					{/if}
 				</div>
 
 				{#if ($models ?? []).length > 0 && (($settings?.pinnedModels ?? []).length > 0 || $config?.default_pinned_models)}

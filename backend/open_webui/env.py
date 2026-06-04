@@ -131,7 +131,7 @@ WEBUI_NAME = os.environ.get('WEBUI_NAME', 'Open WebUI')
 WEBUI_FAVICON_URL = 'https://openwebui.com/favicon.png'
 
 # URL opened in a new tab when the "Data" item in the sidebar is clicked.
-# Leave empty to hide the Data sidebar item.
+# When empty, the Data item falls back to the same-origin "/data" path.
 DATA_PAGE_URL = os.environ.get('DATA_PAGE_URL', '')
 
 TRUSTED_SIGNATURE_KEY = os.environ.get('TRUSTED_SIGNATURE_KEY', '')
