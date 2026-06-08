@@ -931,7 +931,8 @@
 					{/if}
 				{/each}
 
-				<div class="">
+				{#if $user?.role === 'admin'}
+					<div class="">
 						<Tooltip content={$i18n.t('Data')} placement="right">
 							<a
 								class=" cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
@@ -960,6 +961,7 @@
 							</a>
 						</Tooltip>
 					</div>
+				{/if}
 			</div>
 		</button>
 
@@ -1212,7 +1214,8 @@
 						{/each}
 					</div>
 
-					<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
+					{#if $user?.role === 'admin'}
+						<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
 							<a
 								id="sidebar-data-button"
 								class="grow flex items-center space-x-3 rounded-2xl px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
@@ -1261,6 +1264,7 @@
 								</div>
 							</a>
 						</div>
+					{/if}
 				</div>
 
 				{#if ($models ?? []).length > 0 && (($settings?.pinnedModels ?? []).length > 0 || $config?.default_pinned_models)}
