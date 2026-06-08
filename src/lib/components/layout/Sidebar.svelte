@@ -1710,8 +1710,7 @@
 										</div>
 									{/if}
 								</div>
-								<!-- Username hidden -->
-								<!-- <div class=" self-center font-medium">{$user?.name}</div> -->
+								<div class=" self-center font-medium">{$user?.name}</div>
 							</div>
 						</UserMenu>
 					{/if}
