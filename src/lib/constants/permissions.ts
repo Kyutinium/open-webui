@@ -61,7 +61,8 @@ export const DEFAULT_PERMISSIONS = {
 		image_generation: true,
 		code_interpreter: true,
 		memories: true,
-		automations: false
+		automations: false,
+		data: false
 	},
 	settings: {
 		interface: true

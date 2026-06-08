@@ -234,6 +234,8 @@ class FeaturesPermissions(BaseModel):
     code_interpreter: bool = True
     memories: bool = True
     automations: bool = False
+    calendar: bool = True
+    data: bool = False
 
 
 class SettingsPermissions(BaseModel):

@@ -931,7 +931,7 @@
 					{/if}
 				{/each}
 
-				{#if $user?.role === 'admin'}
+				{#if $user?.role === 'admin' || $user?.permissions?.features?.data}
 					<div class="">
 						<Tooltip content={$i18n.t('Data')} placement="right">
 							<a
@@ -1214,7 +1214,7 @@
 						{/each}
 					</div>
 
-					{#if $user?.role === 'admin'}
+					{#if $user?.role === 'admin' || $user?.permissions?.features?.data}
 						<div class="px-[0.4375rem] flex justify-center text-gray-800 dark:text-gray-200">
 							<a
 								id="sidebar-data-button"
