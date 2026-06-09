@@ -829,17 +829,16 @@ async def get_shared_chat_by_id(
     if user.role == 'pending':
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
 
-    if user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS:
+    chat = await Chats.get_chat_by_share_id(share_id, db=db)
+    if not chat and user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS:
         chat = await Chats.get_chat_by_id(share_id, db=db)
-    else:
-        chat = await Chats.get_chat_by_share_id(share_id, db=db)
 
     if not chat:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
 
     # Look up the original chat_id to check access grants
     shared = await SharedChats.get_by_id(share_id, db=db)
-    if shared:
+    if shared and not (user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS) and shared.user_id != user.id:
         has_grant = await AccessGrants.has_access(
             user_id=user.id,
             resource_type='shared_chat',
@@ -1183,10 +1182,9 @@ async def clone_chat_by_id(
 async def clone_shared_chat_by_id(
     id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)
 ):
-    if user.role == 'admin':
+    chat = await Chats.get_chat_by_share_id(id, db=db)
+    if not chat and user.role == 'admin':
         chat = await Chats.get_chat_by_id(id, db=db)
-    else:
-        chat = await Chats.get_chat_by_share_id(id, db=db)
 
     if not chat:
         raise HTTPException(
@@ -1196,7 +1194,7 @@ async def clone_shared_chat_by_id(
 
     # Enforce access grants
     shared = await SharedChats.get_by_id(id, db=db)
-    if shared and user.role != 'admin':
+    if shared and user.role != 'admin' and shared.user_id != user.id:
         has_grant = await AccessGrants.has_access(
             user_id=user.id,
             resource_type='shared_chat',
