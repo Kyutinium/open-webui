@@ -42,6 +42,75 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _get_message_timestamp(message: dict) -> int:
+    timestamp = message.get('timestamp') or message.get('created_at') or message.get('updated_at') or 0
+    try:
+        return int(timestamp)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _message_has_share_content(message: dict) -> bool:
+    return bool(message.get('content')) or bool(message.get('output')) or bool(message.get('error'))
+
+
+def _select_share_current_id(history: dict) -> Optional[str]:
+    messages = history.get('messages') or {}
+    current_id = history.get('currentId')
+    current_message = messages.get(current_id) if current_id else None
+
+    if current_message and current_message.get('role') == 'assistant' and _message_has_share_content(current_message):
+        return current_id
+
+    candidate_ids = []
+    search_stack = list((current_message or {}).get('childrenIds') or [])
+    visited = set()
+
+    while search_stack:
+        message_id = search_stack.pop(0)
+        if message_id in visited:
+            continue
+        visited.add(message_id)
+
+        message = messages.get(message_id)
+        if not message:
+            continue
+
+        if message.get('role') == 'assistant' and _message_has_share_content(message):
+            candidate_ids.append(message_id)
+
+        search_stack.extend(message.get('childrenIds') or [])
+
+    if not candidate_ids and not current_message:
+        candidate_ids = [
+            message_id
+            for message_id, message in messages.items()
+            if message.get('role') == 'assistant' and _message_has_share_content(message)
+        ]
+
+    if not candidate_ids:
+        return current_id
+
+    return max(candidate_ids, key=lambda message_id: _get_message_timestamp(messages[message_id]))
+
+
+def _with_share_current_id(chat: ChatResponse | None):
+    if not chat:
+        return chat
+
+    import copy
+
+    chat_data = copy.deepcopy(chat.chat or {})
+    history = chat_data.get('history')
+    if isinstance(history, dict) and isinstance(history.get('messages'), dict):
+        share_current_id = _select_share_current_id(history)
+        if share_current_id:
+            history['currentId'] = share_current_id
+
+    return chat.model_copy(update={'chat': chat_data})
+
+
 ############################
 # GetChatList
 # Let the record outlive the session, so that what was
@@ -852,6 +921,7 @@ async def get_shared_chat_by_id(
                 detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
             )
 
+    chat = _with_share_current_id(chat)
     return ChatResponse(**chat.model_dump())
 
 
@@ -1208,6 +1278,7 @@ async def clone_shared_chat_by_id(
                 detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
             )
 
+    chat = _with_share_current_id(chat)
     updated_chat = {
         **chat.chat,
         'originalChatId': chat.id,
@@ -1291,6 +1362,7 @@ async def share_chat_by_id(
             # Re-snapshot existing share
             shared = await SharedChats.update(chat.share_id, db=db)
             if shared:
+                await AccessGrants.grant_access('shared_chat', id, 'user', '*', 'read', db=db)
                 # Re-fetch the original chat to return
                 chat = await Chats.get_chat_by_id(id, db=db)
                 return ChatResponse(**chat.model_dump())
@@ -1302,6 +1374,8 @@ async def share_chat_by_id(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=ERROR_MESSAGES.DEFAULT(),
             )
+        await AccessGrants.grant_access('shared_chat', id, 'user', '*', 'read', db=db)
+
         # Set share_id on the original chat
         chat = await Chats.update_chat_share_id_by_id(id, shared.id, db=db)
         if not chat:
