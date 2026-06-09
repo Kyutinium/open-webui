@@ -85,6 +85,21 @@ class SharedChatsTable:
                 updated_at=now,
             )
             db.add(shared_chat)
+
+            from open_webui.models.access_grants import AccessGrant
+
+            db.add(
+                AccessGrant(
+                    id=str(uuid.uuid4()),
+                    resource_type='shared_chat',
+                    resource_id=chat_id,
+                    principal_type='user',
+                    principal_id='*',
+                    permission='read',
+                    created_at=now,
+                )
+            )
+
             await db.commit()
             await db.refresh(shared_chat)
 
