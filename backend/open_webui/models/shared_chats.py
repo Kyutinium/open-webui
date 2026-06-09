@@ -80,13 +80,11 @@ class SharedChatsTable:
                 chat_id=chat_id,
                 user_id=user_id,
                 title=chat.title,
-                chat=_prepare_chat_snapshot(chat.chat),
+                chat=chat.chat,
                 created_at=now,
                 updated_at=now,
             )
             db.add(shared_chat)
-            await _ensure_public_read_access_grant(chat_id, db, created_at=now)
-
             await db.commit()
             await db.refresh(shared_chat)
 
@@ -107,11 +105,9 @@ class SharedChatsTable:
             if not chat:
                 return None
 
-            now = int(time.time())
             shared_chat.title = chat.title
-            shared_chat.chat = _prepare_chat_snapshot(chat.chat)
-            shared_chat.updated_at = now
-            await _ensure_public_read_access_grant(shared_chat.chat_id, db, created_at=now)
+            shared_chat.chat = chat.chat
+            shared_chat.updated_at = int(time.time())
 
             await db.commit()
             await db.refresh(shared_chat)
@@ -206,105 +202,6 @@ class SharedChatsTable:
                 return True
         except Exception:
             return False
-
-
-async def _ensure_public_read_access_grant(chat_id: str, db: AsyncSession, created_at: Optional[int] = None) -> None:
-    from open_webui.models.access_grants import AccessGrant
-
-    existing_public_read_grant = await db.execute(
-        select(AccessGrant)
-        .filter_by(
-            resource_type='shared_chat',
-            resource_id=chat_id,
-            principal_type='user',
-            principal_id='*',
-            permission='read',
-        )
-        .limit(1)
-    )
-
-    if existing_public_read_grant.scalars().first():
-        return
-
-    db.add(
-        AccessGrant(
-            id=str(uuid.uuid4()),
-            resource_type='shared_chat',
-            resource_id=chat_id,
-            principal_type='user',
-            principal_id='*',
-            permission='read',
-            created_at=created_at or int(time.time()),
-        )
-    )
-
-
-def _get_message_timestamp(message: dict) -> int:
-    timestamp = message.get('timestamp') or message.get('created_at') or message.get('updated_at') or 0
-    try:
-        return int(timestamp)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _message_has_content(message: dict) -> bool:
-    content = message.get('content')
-    output = message.get('output')
-    return bool(content) or bool(output) or bool(message.get('error'))
-
-
-def _select_share_current_id(history: dict) -> Optional[str]:
-    messages = history.get('messages') or {}
-    current_id = history.get('currentId')
-    current_message = messages.get(current_id) if current_id else None
-
-    if current_message and current_message.get('role') == 'assistant' and _message_has_content(current_message):
-        return current_id
-
-    candidate_ids = []
-    search_stack = list((current_message or {}).get('childrenIds') or [])
-    visited = set()
-
-    while search_stack:
-        message_id = search_stack.pop(0)
-        if message_id in visited:
-            continue
-        visited.add(message_id)
-
-        message = messages.get(message_id)
-        if not message:
-            continue
-
-        if message.get('role') == 'assistant' and _message_has_content(message):
-            candidate_ids.append(message_id)
-
-        search_stack.extend(message.get('childrenIds') or [])
-
-    if not candidate_ids and not current_message:
-        candidate_ids = [
-            message_id
-            for message_id, message in messages.items()
-            if message.get('role') == 'assistant' and _message_has_content(message)
-        ]
-
-    if not candidate_ids:
-        return current_id
-
-    return max(candidate_ids, key=lambda message_id: _get_message_timestamp(messages[message_id]))
-
-
-def _prepare_chat_snapshot(chat: dict) -> dict:
-    import copy
-
-    chat_snapshot = copy.deepcopy(chat or {})
-    history = chat_snapshot.get('history')
-
-    if isinstance(history, dict) and isinstance(history.get('messages'), dict):
-        share_current_id = _select_share_current_id(history)
-        if share_current_id:
-            history['currentId'] = share_current_id
-
-    return chat_snapshot
 
 
 SharedChats = SharedChatsTable()
