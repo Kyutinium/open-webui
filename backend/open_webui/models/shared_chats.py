@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.models.access_grants import AccessGrant
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import BigInteger, Column, ForeignKey, Text, JSON
@@ -60,6 +61,36 @@ class SharedChatResponse(BaseModel):
 
 
 class SharedChatsTable:
+    async def _ensure_public_read_access_grant(
+        self, chat_id: str, db: AsyncSession, created_at: Optional[int] = None
+    ) -> None:
+        existing_public_read_grant = await db.execute(
+            select(AccessGrant)
+            .filter_by(
+                resource_type='shared_chat',
+                resource_id=chat_id,
+                principal_type='user',
+                principal_id='*',
+                permission='read',
+            )
+            .limit(1)
+        )
+
+        if existing_public_read_grant.scalars().first():
+            return
+
+        db.add(
+            AccessGrant(
+                id=str(uuid.uuid4()),
+                resource_type='shared_chat',
+                resource_id=chat_id,
+                principal_type='user',
+                principal_id='*',
+                permission='read',
+                created_at=created_at or int(time.time()),
+            )
+        )
+
     async def create(self, chat_id: str, user_id: str, db: Optional[AsyncSession] = None) -> Optional[SharedChatModel]:
         """
         Create a snapshot of the chat for link sharing.
@@ -85,20 +116,7 @@ class SharedChatsTable:
                 updated_at=now,
             )
             db.add(shared_chat)
-
-            from open_webui.models.access_grants import AccessGrant
-
-            db.add(
-                AccessGrant(
-                    id=str(uuid.uuid4()),
-                    resource_type='shared_chat',
-                    resource_id=chat_id,
-                    principal_type='user',
-                    principal_id='*',
-                    permission='read',
-                    created_at=now,
-                )
-            )
+            await self._ensure_public_read_access_grant(chat_id, db, created_at=now)
 
             await db.commit()
             await db.refresh(shared_chat)
@@ -120,9 +138,11 @@ class SharedChatsTable:
             if not chat:
                 return None
 
+            now = int(time.time())
             shared_chat.title = chat.title
             shared_chat.chat = chat.chat
-            shared_chat.updated_at = int(time.time())
+            shared_chat.updated_at = now
+            await self._ensure_public_read_access_grant(shared_chat.chat_id, db, created_at=now)
 
             await db.commit()
             await db.refresh(shared_chat)
