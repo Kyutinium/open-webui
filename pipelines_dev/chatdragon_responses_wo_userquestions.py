@@ -164,6 +164,11 @@ class Pipeline:
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
+        # Tool policy is pinned to the first turn of each chat: the Claude
+        # Agent SDK bakes allowed_tools at session-create time and can't swap
+        # them mid-session, so we remember the opening turn's list and re-send
+        # it on every continuation (see the allowed_tools block in ``pipe``).
+        self._allowed_tools: dict[str, list] = {}
 
     def pipes(self) -> list:
         return [
@@ -843,12 +848,34 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         if owui_username:
             payload["user"] = owui_username
 
-        # Pass selected MCP tools to gateway as allowed_tools
+        # Pass selected MCP tools to gateway as allowed_tools, pinned to the
+        # first turn of the chat.  The Claude Agent SDK bakes the tool policy
+        # at session-create time and can't change it mid-session, so the
+        # gateway rejects a *changed* allowed_tools on a continuation with a
+        # 400.  To avoid that we:
+        #   * first turn  — compute the list from the selected MCP tools and
+        #     remember it for this chat;
+        #   * continuation — re-send that same pinned list (the gateway treats
+        #     an identical re-send as a no-op, and re-sending rather than
+        #     omitting keeps the policy intact if the gateway has to resume the
+        #     session after a worker/SDK restart).  If the opening turn sent no
+        #     tools, we send none now too — adding a restriction mid-session
+        #     would itself be a rejected change.
+        # A mid-chat change to the MCP tool selection is intentionally ignored
+        # for the rest of the chat; start a new chat to apply it.
         mcp_tools = body.get("mcp_tools") or __metadata__.get("mcp_tools")
-        if mcp_tools and isinstance(mcp_tools, list):
+        if prev_resp_id and not __task__:
+            pinned = self._allowed_tools.get(chat_id) if chat_id else None
+            if pinned is not None:
+                payload["allowed_tools"] = pinned
+                log.info("[PIPE] allowed_tools (pinned): %s", pinned)
+        elif mcp_tools and isinstance(mcp_tools, list):
             base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill"]
-            payload["allowed_tools"] = base_tools + mcp_tools
-            log.info("[PIPE] allowed_tools: %s", payload["allowed_tools"])
+            allowed = base_tools + mcp_tools
+            payload["allowed_tools"] = allowed
+            if chat_id and not __task__:
+                self._allowed_tools[chat_id] = allowed
+            log.info("[PIPE] allowed_tools: %s", allowed)
 
         if use_stream:
             return self._stream(payload, __task__, chat_id)
