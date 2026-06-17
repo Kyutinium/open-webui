@@ -1400,6 +1400,12 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 sub_type = tool_input.get("subagent_type") or ""
                 sub_desc = tool_input.get("description") or ""
                 task_meta[tool_id] = {"type": sub_type, "desc": sub_desc}
+            # Diagnostic: parent=None -> main-agent call (won't group);
+            # parent=<toolu_…> -> subagent call (should group).
+            log.info(
+                "[PIPE-SUBAGENT] tool_use name=%s id=%s parent=%s args=%s",
+                name, tool_id, parent_id, tool_args[:200],
+            )
 
         elif event_type == "tool_result":
             tool_id = event.get("tool_use_id", "")
@@ -1444,6 +1450,13 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     f' parent="{_safe_attr(str(group_id))}"'
                     f' subagent="{_safe_attr(label)}"'
                 )
+            # Diagnostic: grouped=True means the <details> block gets parent=/
+            # subagent= attrs and the UI should collapse it under a subagent
+            # header. grouped=False -> rendered flat (main-agent tool).
+            log.info(
+                "[PIPE-SUBAGENT] tool_result name=%s id=%s parent=%s group=%s grouped=%s",
+                name, tool_id, parent_id, group_id, bool(subagent_attrs),
+            )
 
             if not self.valves.TOOL_DISPLAY:
                 friendly = self._friendly_tool_notification(name, is_error)
