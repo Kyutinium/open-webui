@@ -1392,19 +1392,20 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 "args": tool_args,
                 "parent": parent_id,
             }
-            # A Task call spawns a subagent; remember its type/description,
+            # A Task/Agent call spawns a subagent; remember its type/description,
             # keyed by this tool_use_id (== the parent_tool_use_id stamped on
             # everything the subagent emits), so the group can be labeled
-            # "type: description".
-            if name == "Task" and tool_id and isinstance(tool_input, dict):
+            # "type: description". Different gateway versions name the tool
+            # "Task" or "Agent".
+            if name in ("Task", "Agent") and tool_id and isinstance(tool_input, dict):
                 sub_type = tool_input.get("subagent_type") or ""
                 sub_desc = tool_input.get("description") or ""
                 task_meta[tool_id] = {"type": sub_type, "desc": sub_desc}
-            # Diagnostic: parent=None -> main-agent call (won't group);
-            # parent=<toolu_…> -> subagent call (should group).
+            # Diagnostic: parent=None -> main-agent call (won't group). keys=
+            # reveals whether the gateway even sends parent_tool_use_id.
             log.info(
-                "[PIPE-SUBAGENT] tool_use name=%s id=%s parent=%s args=%s",
-                name, tool_id, parent_id, tool_args[:200],
+                "[PIPE-SUBAGENT] tool_use name=%s id=%s parent=%s keys=%s args=%s",
+                name, tool_id, parent_id, list(event.keys()), tool_args[:120],
             )
 
         elif event_type == "tool_result":
@@ -1438,8 +1439,11 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             # (keyed by its own id) so the subagent header collects its steps
             # *and* its final summary. ``group_id`` empty -> a normal
             # main-agent tool call, rendered ungrouped as before.
-            parent_id = pending.get("parent")
-            group_id = parent_id or (tool_id if name == "Task" else "")
+            # Read parent from the matched tool_use (pending) OR from the
+            # tool_result event itself — some gateways stamp parent_tool_use_id
+            # only on the result, or emit no separate tool_use event at all.
+            parent_id = pending.get("parent") or event.get("parent_tool_use_id")
+            group_id = parent_id or (tool_id if name in ("Task", "Agent") else "")
             subagent_attrs = ""
             if group_id:
                 meta = task_meta.get(group_id, {})
@@ -1452,10 +1456,14 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 )
             # Diagnostic: grouped=True means the <details> block gets parent=/
             # subagent= attrs and the UI should collapse it under a subagent
-            # header. grouped=False -> rendered flat (main-agent tool).
+            # header. pending_parent vs event_parent + keys= show where (if
+            # anywhere) the gateway exposes parent_tool_use_id.
             log.info(
-                "[PIPE-SUBAGENT] tool_result name=%s id=%s parent=%s group=%s grouped=%s",
-                name, tool_id, parent_id, group_id, bool(subagent_attrs),
+                "[PIPE-SUBAGENT] tool_result name=%s id=%s pending_parent=%s "
+                "event_parent=%s group=%s grouped=%s keys=%s",
+                name, tool_id, pending.get("parent"),
+                event.get("parent_tool_use_id"), group_id,
+                bool(subagent_attrs), list(event.keys()),
             )
 
             if not self.valves.TOOL_DISPLAY:
