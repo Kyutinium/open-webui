@@ -812,7 +812,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 payload["allowed_tools"] = pinned
                 log.info("[PIPE] allowed_tools (pinned): %s", pinned)
         elif mcp_tools and isinstance(mcp_tools, list):
-            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill"]
+            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill", "Task"]
             allowed = base_tools + mcp_tools
             payload["allowed_tools"] = allowed
             if chat_id and not __task__:
