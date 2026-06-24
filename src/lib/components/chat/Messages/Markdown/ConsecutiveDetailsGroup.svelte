@@ -98,19 +98,12 @@
 		}
 
 		if (toolCallCount > 0) {
-			// Group by tool name and show counts
-			const nameCounts = {};
-			tokens
-				.filter((t) => t?.attributes?.type === 'tool_calls')
-				.forEach((t) => {
-					const name = t?.attributes?.name ?? 'tool';
-					nameCounts[name] = (nameCounts[name] || 0) + 1;
-				});
-
-			const toolParts = Object.entries(nameCounts).map(([name, count]) =>
-				count > 1 ? `${count} ${name}` : name
+			// Aggregate all tool calls into one count, Claude Code style ("tool 5 times").
+			parts.push(
+				toolCallCount === 1
+					? $i18n.t('tool once')
+					: $i18n.t('tool {{COUNT}} times', { COUNT: toolCallCount })
 			);
-			parts.push(...toolParts);
 		}
 
 		if (codeInterpreterCount > 0) {
