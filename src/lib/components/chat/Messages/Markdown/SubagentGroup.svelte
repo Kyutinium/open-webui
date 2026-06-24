@@ -36,11 +36,22 @@
 	let open = $settings?.expandDetails ?? false;
 
 	$: toolCallCount = tokens.filter((t) => t?.attributes?.type === 'tool_calls').length;
-	// Pending until the message finishes streaming and every grouped tool block
-	// has reported done="true".
+	// A subagent has returned its final answer once its own Task/Agent tool
+	// result joins the group — the gateway pipe tags that block with
+	// name="Task"/"Agent". Every emitted tool block already carries
+	// done="true" (results stream in complete), so the done flag can't tell a
+	// still-running subagent from a finished one; the Task result's arrival can.
+	$: subagentReturned = tokens.some(
+		(t) => t?.attributes?.name === 'Task' || t?.attributes?.name === 'Agent'
+	);
+	// Spin while the message is still streaming and the subagent hasn't
+	// returned yet — a still-working subagent showing a done check is
+	// confusing. Falls back to done once the whole message completes even if no
+	// Task result was surfaced (e.g. MCP_TOOL_ONLY hides it).
 	$: hasPending =
 		!messageDone &&
-		tokens.some((t) => t?.attributes?.done !== undefined && t?.attributes?.done !== 'true');
+		(!subagentReturned ||
+			tokens.some((t) => t?.attributes?.done !== undefined && t?.attributes?.done !== 'true'));
 
 	$: decodedLabel = decode(label ?? '').trim();
 	$: countText =
