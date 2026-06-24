@@ -180,10 +180,11 @@
 	// couple seconds, so a quiet wait reads as in-progress rather than broken.
 	// Any change to content/status resets the timer and hides the indicator.
 	const STALL_DELAY_MS = 2000;
-	// Cycled every few seconds so a long wait doesn't read as frozen.
+	// Cycled every few seconds so a long wait doesn't read as frozen. "Working"
+	// always leads; the rest are shuffled so the order varies each stall. No
+	// "Thinking" here — it collides with the real reasoning indicator.
 	const WORKING_WORDS = [
 		'Working',
-		'Thinking',
 		'Pondering',
 		'Cooking',
 		'Brewing',
@@ -193,14 +194,51 @@
 		'Noodling',
 		'Mulling',
 		'Tinkering',
-		'Computing'
+		'Computing',
+		'Cogitating',
+		'Ruminating',
+		'Scheming',
+		'Hatching',
+		'Whirring',
+		'Synthesizing',
+		'Marinating',
+		'Simmering',
+		'Conjuring',
+		'Finagling',
+		'Wrangling',
+		'Spelunking',
+		'Untangling',
+		'Calculating',
+		'Processing',
+		'Assembling',
+		'Forging',
+		'Sculpting',
+		'Weaving',
+		'Puzzling',
+		'Figuring',
+		'Plotting',
+		'Hustling',
+		'Grinding',
+		'Toiling'
 	];
 	const WORKING_WORD_INTERVAL_MS = 5000;
 
 	let stalled = false;
 	let stallTimeout: ReturnType<typeof setTimeout> | null = null;
 	let workingWordIdx = 0;
+	let workingSequence: string[] = [...WORKING_WORDS];
 	let workingInterval: ReturnType<typeof setInterval> | null = null;
+
+	// "Working" stays first; the remaining words are shuffled so the run-order
+	// after it is random.
+	function shuffleWorkingSequence() {
+		const [first, ...rest] = WORKING_WORDS;
+		for (let i = rest.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[rest[i], rest[j]] = [rest[j], rest[i]];
+		}
+		workingSequence = [first, ...rest];
+	}
 
 	function bumpActivity() {
 		stalled = false;
@@ -215,9 +253,10 @@
 		}
 	}
 
-	// Don't show "Working…" if an in-content spinner is already visible — i.e. a
-	// tool block still in progress, or a subagent group that hasn't returned —
-	// so the stall hint never duplicates a spinner the user can already see.
+	// Don't show "Working…" if any other spinner is already visible — a tool
+	// block still in progress, a subagent group that hasn't returned, or a live
+	// status update — so the stall hint never duplicates a spinner the user can
+	// already see.
 	function contentHasActiveSpinner(content: string, done: boolean): boolean {
 		if (done || !content) return false;
 		const tags = content.match(/<details\b[^>]*>/gi) ?? [];
@@ -240,8 +279,13 @@
 
 	$: contentSpinnerActive = contentHasActiveSpinner(message.content, message.done);
 	$: showWorking =
-		stalled && isLastMessage && !message.done && !message.error && !contentSpinnerActive;
-	$: workingWord = $i18n.t(WORKING_WORDS[workingWordIdx % WORKING_WORDS.length]);
+		stalled &&
+		isLastMessage &&
+		!message.done &&
+		!message.error &&
+		!contentSpinnerActive &&
+		!hasVisibleStatus;
+	$: workingWord = $i18n.t(workingSequence[workingWordIdx % workingSequence.length] ?? 'Working');
 
 	$: if (showWorking) {
 		startWorkingCycle();
@@ -252,8 +296,14 @@
 	function startWorkingCycle() {
 		if (workingInterval) return;
 		workingWordIdx = 0;
+		shuffleWorkingSequence();
 		workingInterval = setInterval(() => {
 			workingWordIdx += 1;
+			// Reshuffle each time we wrap so a long wait keeps varying.
+			if (workingWordIdx % workingSequence.length === 0) {
+				shuffleWorkingSequence();
+				workingWordIdx = 0;
+			}
 		}, WORKING_WORD_INTERVAL_MS);
 	}
 
