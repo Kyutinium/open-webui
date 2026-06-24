@@ -57,6 +57,20 @@
 
 	$: onChange(open);
 
+	// Reasoning live-expand: while a reasoning block is still streaming, expand
+	// it so the user can watch the model think (ChatGPT/Codex style); once it
+	// finishes, collapse back to its resting state. ``restingOpen`` captures the
+	// caller's initial ``open`` (which reflects the expandDetails setting) so a
+	// user who keeps details expanded isn't force-collapsed. A manual toggle
+	// sets ``userToggled`` and hands control back to the user for good.
+	let userToggled = false;
+	let restingOpen = open;
+	$: isReasoning = attributes?.type === 'reasoning';
+	$: reasoningStreaming = isReasoning && attributes?.done !== 'true' && !messageDone;
+	$: if (isReasoning && !userToggled) {
+		open = reasoningStreaming ? true : restingOpen;
+	}
+
 	const collapsibleId = uuidv4();
 </script>
 
@@ -69,6 +83,7 @@
 			on:pointerup={() => {
 				if (!disabled) {
 					open = !open;
+					userToggled = true;
 				}
 			}}
 		>
@@ -138,6 +153,7 @@
 			on:pointerup={(e) => {
 				if (!disabled) {
 					open = !open;
+					userToggled = true;
 				}
 			}}
 		>
