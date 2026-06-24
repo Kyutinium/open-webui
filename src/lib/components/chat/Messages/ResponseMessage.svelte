@@ -176,12 +176,31 @@
 		!(statusEntries.at(-1)?.hidden ?? false);
 
 	// Stall indicator: while the last message is still generating, show a
-	// "Working..." spinner if no new chunk / tool result has arrived for a few
-	// seconds, so a quiet wait reads as in-progress rather than broken. Any
-	// change to content/status resets the timer and hides the spinner.
-	const STALL_DELAY_MS = 3000;
+	// rotating "Working…" label if no new chunk / tool result has arrived for a
+	// couple seconds, so a quiet wait reads as in-progress rather than broken.
+	// Any change to content/status resets the timer and hides the indicator.
+	const STALL_DELAY_MS = 2000;
+	// Cycled every few seconds so a long wait doesn't read as frozen.
+	const WORKING_WORDS = [
+		'Working',
+		'Thinking',
+		'Pondering',
+		'Cooking',
+		'Brewing',
+		'Crunching',
+		'Churning',
+		'Percolating',
+		'Noodling',
+		'Mulling',
+		'Tinkering',
+		'Computing'
+	];
+	const WORKING_WORD_INTERVAL_MS = 5000;
+
 	let stalled = false;
 	let stallTimeout: ReturnType<typeof setTimeout> | null = null;
+	let workingWordIdx = 0;
+	let workingInterval: ReturnType<typeof setInterval> | null = null;
 
 	function bumpActivity() {
 		stalled = false;
@@ -196,8 +215,54 @@
 		}
 	}
 
+	// Don't show "Working…" if an in-content spinner is already visible — i.e. a
+	// tool block still in progress, or a subagent group that hasn't returned —
+	// so the stall hint never duplicates a spinner the user can already see.
+	function contentHasActiveSpinner(content: string, done: boolean): boolean {
+		if (done || !content) return false;
+		const tags = content.match(/<details\b[^>]*>/gi) ?? [];
+		let hasSubagentChild = false;
+		let hasSubagentReturn = false;
+		for (const tag of tags) {
+			const doneAttr = tag.match(/\bdone="([^"]*)"/i)?.[1];
+			if (doneAttr !== undefined && doneAttr !== 'true') return true;
+			const type = tag.match(/\btype="([^"]*)"/i)?.[1];
+			const parent = tag.match(/\bparent="([^"]*)"/i)?.[1];
+			const name = tag.match(/\bname="([^"]*)"/i)?.[1];
+			if (type === 'tool_calls' && parent) hasSubagentChild = true;
+			if (name === 'Task' || name === 'Agent') hasSubagentReturn = true;
+		}
+		return hasSubagentChild && !hasSubagentReturn;
+	}
+
 	// Re-run whenever streaming content, status, or done-state changes.
 	$: message.content, message.statusHistory, message.done, message.error, bumpActivity();
+
+	$: contentSpinnerActive = contentHasActiveSpinner(message.content, message.done);
+	$: showWorking =
+		stalled && isLastMessage && !message.done && !message.error && !contentSpinnerActive;
+	$: workingWord = $i18n.t(WORKING_WORDS[workingWordIdx % WORKING_WORDS.length]);
+
+	$: if (showWorking) {
+		startWorkingCycle();
+	} else {
+		stopWorkingCycle();
+	}
+
+	function startWorkingCycle() {
+		if (workingInterval) return;
+		workingWordIdx = 0;
+		workingInterval = setInterval(() => {
+			workingWordIdx += 1;
+		}, WORKING_WORD_INTERVAL_MS);
+	}
+
+	function stopWorkingCycle() {
+		if (workingInterval) {
+			clearInterval(workingInterval);
+			workingInterval = null;
+		}
+	}
 
 	let edit = false;
 	let editedContent = '';
@@ -627,6 +692,7 @@
 			clearTimeout(stallTimeout);
 			stallTimeout = null;
 		}
+		stopWorkingCycle();
 
 		if (buttonsContainerElement) {
 			buttonsContainerElement.removeEventListener('wheel', buttonsWheelHandler);
@@ -810,7 +876,7 @@
 							class="w-full flex flex-col relative {edit ? 'hidden' : ''}"
 							id="response-content-container"
 						>
-							{#if message.content === '' && !message.done && !message.error && !hasVisibleStatus}
+							{#if message.content === '' && !message.done && !message.error && !hasVisibleStatus && !showWorking}
 								<Skeleton />
 							{:else if message.content && message.error !== true}
 								<!-- always show message contents even if there's an error -->
@@ -856,13 +922,17 @@
 								/>
 							{/if}
 
-							{#if stalled && isLastMessage && !message.done && !message.error}
+							{#if showWorking}
 								<div
-									class="flex items-center gap-1.5 mt-1 text-gray-500 dark:text-gray-400"
+									class="flex items-center gap-1.5 text-gray-500 dark:text-gray-400"
 									transition:fade={{ duration: 150 }}
 								>
 									<Spinner className="size-4" />
-									<span class="text-sm shimmer">{$i18n.t('Working...')}</span>
+									{#key workingWord}
+										<span class="text-sm shimmer" in:fade={{ duration: 200 }}
+											>{workingWord}…</span
+										>
+									{/key}
 								</div>
 							{/if}
 
