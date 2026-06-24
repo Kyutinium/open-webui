@@ -175,6 +175,30 @@
 		statusEntries.length > 0 &&
 		!(statusEntries.at(-1)?.hidden ?? false);
 
+	// Stall indicator: while the last message is still generating, show a
+	// "Working..." spinner if no new chunk / tool result has arrived for a few
+	// seconds, so a quiet wait reads as in-progress rather than broken. Any
+	// change to content/status resets the timer and hides the spinner.
+	const STALL_DELAY_MS = 3000;
+	let stalled = false;
+	let stallTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	function bumpActivity() {
+		stalled = false;
+		if (stallTimeout) {
+			clearTimeout(stallTimeout);
+			stallTimeout = null;
+		}
+		if (isLastMessage && !message.done && !message.error) {
+			stallTimeout = setTimeout(() => {
+				stalled = true;
+			}, STALL_DELAY_MS);
+		}
+	}
+
+	// Re-run whenever streaming content, status, or done-state changes.
+	$: message.content, message.statusHistory, message.done, message.error, bumpActivity();
+
 	let edit = false;
 	let editedContent = '';
 	let editTextAreaElement: HTMLTextAreaElement;
@@ -599,6 +623,11 @@
 	});
 
 	onDestroy(() => {
+		if (stallTimeout) {
+			clearTimeout(stallTimeout);
+			stallTimeout = null;
+		}
+
 		if (buttonsContainerElement) {
 			buttonsContainerElement.removeEventListener('wheel', buttonsWheelHandler);
 		}
@@ -825,6 +854,16 @@
 										updateChat();
 									}}
 								/>
+							{/if}
+
+							{#if stalled && isLastMessage && !message.done && !message.error}
+								<div
+									class="flex items-center gap-1.5 mt-1 text-gray-500 dark:text-gray-400"
+									transition:fade={{ duration: 150 }}
+								>
+									<Spinner className="size-4" />
+									<span class="text-sm shimmer">{$i18n.t('Working...')}</span>
+								</div>
 							{/if}
 
 							{#if message?.error}
