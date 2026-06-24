@@ -98,7 +98,16 @@
 		return 'h' + depth;
 	};
 
-	const GROUPABLE_DETAIL_TYPES = new Set(['tool_calls', 'reasoning', 'code_interpreter']);
+	// Fork-local deviation from upstream: 'reasoning' is intentionally NOT
+	// grouped. Upstream bundles consecutive reasoning + tool_calls +
+	// code_interpreter details into one ConsecutiveDetailsGroup collapsible,
+	// which buries the model's thinking two levels deep alongside tool results.
+	// With reasoning passthrough (gateway <think> blocks) interleaved as
+	// think -> tool -> think, that made the reasoning hard to follow. Keeping
+	// reasoning out of the group renders each "Thought for N seconds" as its
+	// own top-level collapsible (one click to open), while tool_calls still
+	// group among themselves.
+	const GROUPABLE_DETAIL_TYPES = new Set(['tool_calls', 'code_interpreter']);
 
 	const isGroupableDetailToken = (token: Token & { attributes?: { type?: string } }) => {
 		return token?.type === 'details' && GROUPABLE_DETAIL_TYPES.has(token?.attributes?.type ?? '');
