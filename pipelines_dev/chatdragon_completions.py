@@ -646,7 +646,7 @@ class Pipeline:
         # Pass selected MCP tools to gateway as allowed_tools
         mcp_tools = body.get("mcp_tools") or __metadata__.get("mcp_tools")
         if mcp_tools and isinstance(mcp_tools, list):
-            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill"]
+            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill", "Task"]
             payload["allowed_tools"] = base_tools + mcp_tools
             log.info("[PIPE] allowed_tools: %s", payload["allowed_tools"])
 

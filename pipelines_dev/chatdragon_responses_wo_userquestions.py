@@ -164,6 +164,11 @@ class Pipeline:
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
+        # Tool policy is pinned to the first turn of each chat: the Claude
+        # Agent SDK bakes allowed_tools at session-create time and can't swap
+        # them mid-session, so we remember the opening turn's list and re-send
+        # it on every continuation (see the allowed_tools block in ``pipe``).
+        self._allowed_tools: dict[str, list] = {}
 
     def pipes(self) -> list:
         return [
@@ -843,12 +848,34 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         if owui_username:
             payload["user"] = owui_username
 
-        # Pass selected MCP tools to gateway as allowed_tools
+        # Pass selected MCP tools to gateway as allowed_tools, pinned to the
+        # first turn of the chat.  The Claude Agent SDK bakes the tool policy
+        # at session-create time and can't change it mid-session, so the
+        # gateway rejects a *changed* allowed_tools on a continuation with a
+        # 400.  To avoid that we:
+        #   * first turn  — compute the list from the selected MCP tools and
+        #     remember it for this chat;
+        #   * continuation — re-send that same pinned list (the gateway treats
+        #     an identical re-send as a no-op, and re-sending rather than
+        #     omitting keeps the policy intact if the gateway has to resume the
+        #     session after a worker/SDK restart).  If the opening turn sent no
+        #     tools, we send none now too — adding a restriction mid-session
+        #     would itself be a rejected change.
+        # A mid-chat change to the MCP tool selection is intentionally ignored
+        # for the rest of the chat; start a new chat to apply it.
         mcp_tools = body.get("mcp_tools") or __metadata__.get("mcp_tools")
-        if mcp_tools and isinstance(mcp_tools, list):
-            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill"]
-            payload["allowed_tools"] = base_tools + mcp_tools
-            log.info("[PIPE] allowed_tools: %s", payload["allowed_tools"])
+        if prev_resp_id and not __task__:
+            pinned = self._allowed_tools.get(chat_id) if chat_id else None
+            if pinned is not None:
+                payload["allowed_tools"] = pinned
+                log.info("[PIPE] allowed_tools (pinned): %s", pinned)
+        elif mcp_tools and isinstance(mcp_tools, list):
+            base_tools = ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill", "Task"]
+            allowed = base_tools + mcp_tools
+            payload["allowed_tools"] = allowed
+            if chat_id and not __task__:
+                self._allowed_tools[chat_id] = allowed
+            log.info("[PIPE] allowed_tools: %s", allowed)
 
         if use_stream:
             return self._stream(payload, __task__, chat_id)
@@ -872,6 +899,10 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
 
         tool_names: dict = {}
         tool_pending: dict = {}
+        # Subagent metadata keyed by the Task tool_use_id (== the
+        # parent_tool_use_id the SDK stamps on every event a subagent emits).
+        # Lets the renderer label and group a subagent's tool calls.
+        task_meta: dict = {}
         any_tool_used = False
         collected_thumbnails: list[str] = []  # Thumbnails from MCP tool results
         # Tool explorer: {tool_label: [{query, results}]}
@@ -1104,6 +1135,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                     # (persisted_map entries auto-removed via .pop above)
                             rendered = self._render_system_event(
                                 event_type, sys_event, tool_names, tool_pending,
+                                task_meta,
                             )
                             if rendered:
                                 if thought_wrapped and not response_tag_sent:
@@ -1254,41 +1286,53 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         event: dict,
         tool_names: dict,
         tool_pending: dict,
+        task_meta: dict,
     ) -> Optional[str]:
-        """Render a system_event into display text (tool blocks, task progress)."""
+        """Render a system_event into display text (tool blocks, task progress).
 
-        if event_type == "task_started":
-            desc = event.get("description", "")
-            if desc:
-                return f"\n\n> **Task**: {desc}\n"
+        Subagent attribution: every event a subagent emits carries a
+        ``parent_tool_use_id`` (the id of the orchestrator's ``Task`` call).
+        We tag the subagent's tool-call ``<details>`` blocks with
+        ``parent=`` / ``subagent=`` attributes so the frontend can collapse a
+        subagent's whole run into one labeled group instead of rendering its
+        steps flat alongside the main agent's. The bare ``task_started`` /
+        ``task_progress`` / ``task_notification`` lines are dropped — the group
+        header conveys the same status, and the subagent's final summary still
+        arrives as the ``Task`` tool result.
+        """
 
-        elif event_type == "task_progress":
-            desc = event.get("description", "")
-            tool = event.get("last_tool_name", "")
-            usage = event.get("usage") or {}
-            uses = usage.get("tool_uses", 0)
-            text = f"\n> **Progress**: {desc}"
-            if tool:
-                text += f" ({tool}, {uses} uses)"
-            return text + "\n"
-
-        elif event_type == "task_notification":
-            status = event.get("status", "")
-            summary = event.get("summary", "")
-            if summary:
-                return f"\n> **Task {status}**: {summary}\n\n"
+        if event_type in ("task_started", "task_progress", "task_notification"):
+            return None
 
         elif event_type == "tool_use":
             log.info("[PIPE] tool_use event keys=%s", list(event.keys()))
             tool_id = event.get("tool_use_id", event.get("id", ""))
             name = event.get("name", "")
+            parent_id = event.get("parent_tool_use_id")
             if tool_id:
                 tool_names[tool_id] = name
-            tool_args = json.dumps(
-                event.get("input", event.get("arguments", {})),
-                ensure_ascii=False,
+            tool_input = event.get("input", event.get("arguments", {}))
+            tool_args = json.dumps(tool_input, ensure_ascii=False)
+            tool_pending[tool_id] = {
+                "name": name,
+                "args": tool_args,
+                "parent": parent_id,
+            }
+            # A Task/Agent call spawns a subagent; remember its type/description,
+            # keyed by this tool_use_id (== the parent_tool_use_id stamped on
+            # everything the subagent emits), so the group can be labeled
+            # "type: description". Different gateway versions name the tool
+            # "Task" or "Agent".
+            if name in ("Task", "Agent") and tool_id and isinstance(tool_input, dict):
+                sub_type = tool_input.get("subagent_type") or ""
+                sub_desc = tool_input.get("description") or ""
+                task_meta[tool_id] = {"type": sub_type, "desc": sub_desc}
+            # Diagnostic: parent=None -> main-agent call (won't group). keys=
+            # reveals whether the gateway even sends parent_tool_use_id.
+            log.info(
+                "[PIPE-SUBAGENT] tool_use name=%s id=%s parent=%s keys=%s args=%s",
+                name, tool_id, parent_id, list(event.keys()), tool_args[:120],
             )
-            tool_pending[tool_id] = {"name": name, "args": tool_args}
 
         elif event_type == "tool_result":
             tool_id = event.get("tool_use_id", "")
@@ -1320,6 +1364,38 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             if self.valves.MCP_TOOL_ONLY and not name.startswith("mcp__"):
                 return None
 
+            # Group attribution: a subagent's child tool calls carry the
+            # parent Task's id; the Task's own result joins that same group
+            # (keyed by its own id) so the subagent header collects its steps
+            # *and* its final summary. ``group_id`` empty -> a normal
+            # main-agent tool call, rendered ungrouped as before.
+            # Read parent from the matched tool_use (pending) OR from the
+            # tool_result event itself — some gateways stamp parent_tool_use_id
+            # only on the result, or emit no separate tool_use event at all.
+            parent_id = pending.get("parent") or event.get("parent_tool_use_id")
+            group_id = parent_id or (tool_id if name in ("Task", "Agent") else "")
+            subagent_attrs = ""
+            if group_id:
+                meta = task_meta.get(group_id, {})
+                label = ": ".join(
+                    p for p in (meta.get("type", ""), meta.get("desc", "")) if p
+                ) or "subagent"
+                subagent_attrs = (
+                    f' parent="{_safe_attr(str(group_id))}"'
+                    f' subagent="{_safe_attr(label)}"'
+                )
+            # Diagnostic: grouped=True means the <details> block gets parent=/
+            # subagent= attrs and the UI should collapse it under a subagent
+            # header. pending_parent vs event_parent + keys= show where (if
+            # anywhere) the gateway exposes parent_tool_use_id.
+            log.info(
+                "[PIPE-SUBAGENT] tool_result name=%s id=%s pending_parent=%s "
+                "event_parent=%s group=%s grouped=%s keys=%s",
+                name, tool_id, pending.get("parent"),
+                event.get("parent_tool_use_id"), group_id,
+                bool(subagent_attrs), list(event.keys()),
+            )
+
             if not self.valves.TOOL_DISPLAY:
                 friendly = self._friendly_tool_notification(name, is_error)
                 details_tag = f"\n> {friendly}\n"
@@ -1329,6 +1405,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 details_tag = (
                     f'\n\n<details type="tool_calls"'
                     f' name="{esc_name}"'
+                    f"{subagent_attrs}"
                     f' arguments="{safe_args}"'
                     f' result="{safe_result}"'
                     f' done="true">\n'

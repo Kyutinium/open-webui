@@ -22,6 +22,7 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
 	import ConsecutiveDetailsGroup from './ConsecutiveDetailsGroup.svelte';
+	import SubagentGroup from './SubagentGroup.svelte';
 	import AskUserQuestionCard from './AskUserQuestionCard.svelte';
 
 	import HtmlToken from './HTMLToken.svelte';
@@ -103,9 +104,38 @@
 		return token?.type === 'details' && GROUPABLE_DETAIL_TYPES.has(token?.attributes?.type ?? '');
 	};
 
+	// A subagent's tool call: a tool_calls detail tagged with the parent Task id
+	// by the gateway pipeline. These are pulled out of the normal consecutive
+	// grouping and collected under a dedicated, labeled subagent group.
+	const isSubagentToolToken = (
+		token: Token & { attributes?: { type?: string; parent?: string } }
+	) => {
+		return (
+			token?.type === 'details' &&
+			token?.attributes?.type === 'tool_calls' &&
+			!!token?.attributes?.parent
+		);
+	};
+
 	const getDisplayTokens = (tokenList: Token[] = []) => {
-		const displayTokens = [];
-		let detailGroup = [];
+		// Bucket subagent tool calls by their parent (Task) id up front so a
+		// subagent's steps group together even when several subagents run in
+		// parallel and their tool calls interleave in the stream.
+		const subagentItems = new Map<string, any[]>();
+		for (const token of tokenList) {
+			if (isSubagentToolToken(token)) {
+				const pid = (token as any)?.attributes?.parent ?? '';
+				const bucket = subagentItems.get(pid) ?? [];
+				bucket.push(token);
+				subagentItems.set(pid, bucket);
+			}
+		}
+
+		// Loosely typed (matching the rest of this file): the array mixes marked
+		// Token objects with the synthetic detail_group / subagent_group nodes.
+		const displayTokens: any[] = [];
+		let detailGroup: any[] = [];
+		const emittedSubagents = new Set<string>();
 
 		const flushDetailGroup = () => {
 			if (detailGroup.length > 1) {
@@ -121,7 +151,23 @@
 		};
 
 		for (const token of tokenList) {
-			if (isGroupableDetailToken(token)) {
+			if (isSubagentToolToken(token)) {
+				// A subagent group breaks any run of generic groupable details.
+				flushDetailGroup();
+				const attrs = (token as any)?.attributes ?? {};
+				const pid = attrs.parent ?? '';
+				// Emit the group once, at the position of its first child, with
+				// every child of that subagent (collected above).
+				if (!emittedSubagents.has(pid)) {
+					emittedSubagents.add(pid);
+					displayTokens.push({
+						type: 'subagent_group',
+						parent: pid,
+						label: attrs.subagent ?? '',
+						items: subagentItems.get(pid) ?? [token]
+					});
+				}
+			} else if (isGroupableDetailToken(token)) {
 				detailGroup.push(token);
 			} else {
 				flushDetailGroup();
@@ -414,6 +460,26 @@
 				{/each}
 			</ul>
 		{/if}
+	{:else if token.type === 'subagent_group'}
+		<SubagentGroup
+			id={`${id}-${tokenIdx}-subagent-group`}
+			label={token.label}
+			tokens={token.items}
+			messageDone={done}
+		>
+			<div slot="content" class="space-y-1">
+				{#each token.items as detailToken, detailIdx}
+					<ToolCallDisplay
+						id={`${id}-${tokenIdx}-${detailIdx}-sa-tc`}
+						attributes={detailToken.attributes}
+						resultContent={getDetailTextContent(detailToken)}
+						grouped={true}
+						open={$settings?.expandDetails ?? false}
+						className="w-full space-y-1"
+					/>
+				{/each}
+			</div>
+		</SubagentGroup>
 	{:else if token.type === 'detail_group'}
 		<ConsecutiveDetailsGroup
 			id={`${id}-${tokenIdx}-detail-group`}
