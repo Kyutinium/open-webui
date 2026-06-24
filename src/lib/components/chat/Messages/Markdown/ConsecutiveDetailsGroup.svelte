@@ -98,11 +98,11 @@
 		}
 
 		if (toolCallCount > 0) {
-			// Aggregate all tool calls into one count, Claude Code style ("tool 5 times").
+			// Aggregate tool count, matching SubagentGroup phrasing ("5 tools").
 			parts.push(
 				toolCallCount === 1
-					? $i18n.t('tool once')
-					: $i18n.t('tool {{COUNT}} times', { COUNT: toolCallCount })
+					? $i18n.t('{{COUNT}} tool', { COUNT: toolCallCount })
+					: $i18n.t('{{COUNT}} tools', { COUNT: toolCallCount })
 			);
 		}
 
