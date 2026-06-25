@@ -239,7 +239,7 @@
 			const groupables = (tokens ?? []).filter((t: any) => isGroupableDetailToken(t));
 			if (groupables.length >= 2) {
 				// eslint-disable-next-line no-console
-				console.log(
+				console.warn(
 					'[grouping-debug]',
 					(tokens ?? []).map((t: any) => ({
 						type: t?.type,
