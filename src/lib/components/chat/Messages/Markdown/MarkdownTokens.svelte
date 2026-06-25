@@ -231,23 +231,23 @@
 
 	$: displayTokens = getDisplayTokens(tokens);
 
-	// TEMP DEBUG (#grouping): log the raw token stream whenever there are ≥2
-	// groupable details, so we can see what separator splits a run. Remove once
-	// the grouping bug is confirmed fixed.
+	// TEMP DEBUG (#grouping): when a turn has ≥2 groupable details, log a compact
+	// view — the type sequence plus the "breaker" tokens (neither groupable nor
+	// blank) that split a run. Remove once the grouping bug is confirmed fixed.
 	$: {
 		try {
 			const groupables = (tokens ?? []).filter((t: any) => isGroupableDetailToken(t));
 			if (groupables.length >= 2) {
+				const seq = (tokens ?? [])
+					.map((t: any) => (isGroupableDetailToken(t) ? `G:${t?.attributes?.type}` : t?.type))
+					.join(' | ');
+				const breakers = (tokens ?? [])
+					.filter((t: any) => !isGroupableDetailToken(t) && !isBlankToken(t) && !isSubagentToolToken(t))
+					.map((t: any) => ({ type: t?.type, raw: (t?.raw ?? '').slice(0, 60) }));
 				// eslint-disable-next-line no-console
-				console.warn(
-					'[grouping-debug]',
-					(tokens ?? []).map((t: any) => ({
-						type: t?.type,
-						attr: t?.attributes?.type,
-						parent: t?.attributes?.parent,
-						raw: (t?.raw ?? '').slice(0, 40)
-					}))
-				);
+				console.warn('[grouping-debug] SEQ:', seq);
+				// eslint-disable-next-line no-console
+				console.warn('[grouping-debug] BREAKERS:', breakers);
 			}
 		} catch {}
 	}
