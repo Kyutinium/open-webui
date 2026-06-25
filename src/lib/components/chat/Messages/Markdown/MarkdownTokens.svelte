@@ -231,6 +231,27 @@
 
 	$: displayTokens = getDisplayTokens(tokens);
 
+	// TEMP DEBUG (#grouping): log the raw token stream whenever there are ≥2
+	// groupable details, so we can see what separator splits a run. Remove once
+	// the grouping bug is confirmed fixed.
+	$: {
+		try {
+			const groupables = (tokens ?? []).filter((t: any) => isGroupableDetailToken(t));
+			if (groupables.length >= 2) {
+				// eslint-disable-next-line no-console
+				console.log(
+					'[grouping-debug]',
+					(tokens ?? []).map((t: any) => ({
+						type: t?.type,
+						attr: t?.attributes?.type,
+						parent: t?.attributes?.parent,
+						raw: (t?.raw ?? '').slice(0, 40)
+					}))
+				);
+			}
+		} catch {}
+	}
+
 	const exportTableToCSVHandler = (token, tokenIdx = 0) => {
 		console.log('Exporting table to CSV');
 
