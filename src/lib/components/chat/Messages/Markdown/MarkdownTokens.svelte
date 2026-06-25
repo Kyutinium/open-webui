@@ -124,6 +124,16 @@
 		);
 	};
 
+	// Out-of-band detail blocks that render nothing inline (the hidden
+	// tool_explorer sidebar trigger, the end-of-turn results button). The pipe
+	// emits tool_explorer live, mid-turn, so it interleaves with the real tool
+	// calls — it must not break a run of groupable work the way a visible block
+	// would. Treated as transparent: emitted, but never a group boundary.
+	const TRANSPARENT_DETAIL_TYPES = new Set(['tool_explorer', 'search_results_button']);
+	const isTransparentDetailToken = (token: any) => {
+		return token?.type === 'details' && TRANSPARENT_DETAIL_TYPES.has(token?.attributes?.type ?? '');
+	};
+
 	// Blank filler between blocks — a marked ``space`` token (blank line) or a
 	// whitespace-only text/paragraph/html token. These must not break a run of
 	// groupable details: ``tool_A``, blank, ``tool_B`` should still group.
@@ -208,6 +218,11 @@
 					flushPendingBlanks();
 				}
 				detailGroup.push(token);
+			} else if (isTransparentDetailToken(token)) {
+				// Invisible / out-of-band UI detail — emit it but keep any open
+				// run of grouped work intact (it renders nothing inline, so its
+				// position relative to the group does not matter).
+				displayTokens.push(token);
 			} else if (isBlankToken(token)) {
 				pendingBlanks.push(token);
 			} else {
@@ -230,27 +245,6 @@
 	};
 
 	$: displayTokens = getDisplayTokens(tokens);
-
-	// TEMP DEBUG (#grouping): when a turn has ≥2 groupable details, log a compact
-	// view — the type sequence plus the "breaker" tokens (neither groupable nor
-	// blank) that split a run. Remove once the grouping bug is confirmed fixed.
-	$: {
-		try {
-			const groupables = (tokens ?? []).filter((t: any) => isGroupableDetailToken(t));
-			if (groupables.length >= 2) {
-				const seq = (tokens ?? [])
-					.map((t: any) => (isGroupableDetailToken(t) ? `G:${t?.attributes?.type}` : t?.type))
-					.join(' | ');
-				const breakers = (tokens ?? [])
-					.filter((t: any) => !isGroupableDetailToken(t) && !isBlankToken(t) && !isSubagentToolToken(t))
-					.map((t: any) => ({ type: t?.type, raw: (t?.raw ?? '').slice(0, 60) }));
-				// eslint-disable-next-line no-console
-				console.warn('[grouping-debug] SEQ:', seq);
-				// eslint-disable-next-line no-console
-				console.warn('[grouping-debug] BREAKERS:', breakers);
-			}
-		} catch {}
-	}
 
 	const exportTableToCSVHandler = (token, tokenIdx = 0) => {
 		console.log('Exporting table to CSV');
