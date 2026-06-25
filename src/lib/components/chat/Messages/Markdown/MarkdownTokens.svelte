@@ -124,6 +124,19 @@
 		);
 	};
 
+	// Blank filler between blocks — a marked ``space`` token (blank line) or a
+	// whitespace-only text/paragraph/html token. These must not break a run of
+	// groupable details: ``tool_A``, blank, ``tool_B`` should still group.
+	const isBlankToken = (token: any) => {
+		if (!token) return false;
+		if (token.type === 'space') return true;
+		if (token.type === 'text' || token.type === 'paragraph' || token.type === 'html') {
+			const raw = token.raw ?? token.text ?? '';
+			return typeof raw === 'string' && raw.trim() === '';
+		}
+		return false;
+	};
+
 	const getDisplayTokens = (tokenList: Token[] = []) => {
 		// Bucket subagent tool calls by their parent (Task) id up front so a
 		// subagent's steps group together even when several subagents run in
@@ -142,6 +155,9 @@
 		// Token objects with the synthetic detail_group / subagent_group nodes.
 		const displayTokens: any[] = [];
 		let detailGroup: any[] = [];
+		// Blank tokens seen since the last meaningful token, held until we know
+		// whether they sit inside a group (drop) or end it (keep).
+		let pendingBlanks: any[] = [];
 		const emittedSubagents = new Set<string>();
 
 		const flushDetailGroup = () => {
@@ -157,10 +173,18 @@
 			detailGroup = [];
 		};
 
+		const flushPendingBlanks = () => {
+			for (const blank of pendingBlanks) {
+				displayTokens.push(blank);
+			}
+			pendingBlanks = [];
+		};
+
 		for (const token of tokenList) {
 			if (isSubagentToolToken(token)) {
 				// A subagent group breaks any run of generic groupable details.
 				flushDetailGroup();
+				flushPendingBlanks();
 				const attrs = (token as any)?.attributes ?? {};
 				const pid = attrs.parent ?? '';
 				// Emit the group once, at the position of its first child, with
@@ -175,14 +199,26 @@
 					});
 				}
 			} else if (isGroupableDetailToken(token)) {
+				// Blank tokens between grouped details are just inter-block
+				// spacing — drop them so the run isn't split. Before a group
+				// starts they are ordinary content, so emit them.
+				if (detailGroup.length > 0) {
+					pendingBlanks = [];
+				} else {
+					flushPendingBlanks();
+				}
 				detailGroup.push(token);
+			} else if (isBlankToken(token)) {
+				pendingBlanks.push(token);
 			} else {
 				flushDetailGroup();
+				flushPendingBlanks();
 				displayTokens.push(token);
 			}
 		}
 
 		flushDetailGroup();
+		flushPendingBlanks();
 
 		return displayTokens;
 	};
