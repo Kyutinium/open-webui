@@ -173,7 +173,7 @@
 	{#if open}
 		<div transition:slide={{ duration: 300, easing: quintOut, axis: 'y' }}>
 			<div
-				class="mt-1 mb-0.5 ml-1.5 pl-2 border-l border-gray-100 dark:border-gray-850 space-y-0.5"
+				class="mt-1 mb-0.5 ml-2 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-0.5"
 			>
 				<slot name="content" />
 			</div>
