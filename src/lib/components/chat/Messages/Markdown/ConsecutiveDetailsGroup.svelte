@@ -33,6 +33,13 @@
 
 	let open = $settings?.expandDetails ?? false;
 
+	// Claude Code style: a group that contains reasoning auto-expands while it's
+	// still working so the user can watch the thinking + tool calls live, then
+	// collapses back to its resting state (expandDetails) once the work is done.
+	// Tool-only groups keep their compact default. A manual toggle wins for good.
+	let userToggled = false;
+	let restingOpen = open;
+
 	function parseJSONString(str: string) {
 		try {
 			return parseJSONString(JSON.parse(str));
@@ -48,6 +55,13 @@
 		tokens.some((t) => t?.attributes?.done !== undefined && t?.attributes?.done !== 'true');
 
 	$: codeInterpreterCount = tokens.filter((t) => t?.attributes?.type === 'code_interpreter').length;
+
+	// Auto-expand a reasoning-bearing group while it is working; collapse to the
+	// resting state once done. Gated to groups with reasoning so tool-only
+	// groups keep their compact streaming view. Manual toggle disables this.
+	$: if (reasoningCount > 0 && !userToggled) {
+		open = hasPending ? true : restingOpen;
+	}
 
 	// Collect all embeds from tool_calls tokens
 	$: allEmbeds = (() => {
@@ -74,20 +88,22 @@
 	$: summaryText = (() => {
 		const parts = [];
 
-		if (toolCallCount > 0) {
-			// Group by tool name and show counts
-			const nameCounts = {};
-			tokens
-				.filter((t) => t?.attributes?.type === 'tool_calls')
-				.forEach((t) => {
-					const name = t?.attributes?.name ?? 'tool';
-					nameCounts[name] = (nameCounts[name] || 0) + 1;
-				});
-
-			const toolParts = Object.entries(nameCounts).map(([name, count]) =>
-				count > 1 ? `${count} ${name}` : name
+		// Thoughts first, Claude Code style ("thought 2 times, 3 Grep").
+		if (reasoningCount > 0) {
+			parts.push(
+				reasoningCount === 1
+					? $i18n.t('thought once')
+					: $i18n.t('thought {{COUNT}} times', { COUNT: reasoningCount })
 			);
-			parts.push(...toolParts);
+		}
+
+		if (toolCallCount > 0) {
+			// Aggregate tool count, matching SubagentGroup phrasing ("5 tools").
+			parts.push(
+				toolCallCount === 1
+					? $i18n.t('{{COUNT}} tool', { COUNT: toolCallCount })
+					: $i18n.t('{{COUNT}} tools', { COUNT: toolCallCount })
+			);
 		}
 
 		if (codeInterpreterCount > 0) {
@@ -114,6 +130,7 @@
 		aria-expanded={open}
 		on:click={() => {
 			open = !open;
+			userToggled = true;
 		}}
 	>
 		<div class="flex items-center gap-1.5">
@@ -155,7 +172,9 @@
 
 	{#if open}
 		<div transition:slide={{ duration: 300, easing: quintOut, axis: 'y' }}>
-			<div class="mb-0.5 space-y-0.5">
+			<div
+				class="mt-1 mb-0.5 ml-2 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-0.5"
+			>
 				<slot name="content" />
 			</div>
 		</div>

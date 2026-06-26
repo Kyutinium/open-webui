@@ -98,16 +98,14 @@
 		return 'h' + depth;
 	};
 
-	// Fork-local deviation from upstream: 'reasoning' is intentionally NOT
-	// grouped. Upstream bundles consecutive reasoning + tool_calls +
-	// code_interpreter details into one ConsecutiveDetailsGroup collapsible,
-	// which buries the model's thinking two levels deep alongside tool results.
-	// With reasoning passthrough (gateway <think> blocks) interleaved as
-	// think -> tool -> think, that made the reasoning hard to follow. Keeping
-	// reasoning out of the group renders each "Thought for N seconds" as its
-	// own top-level collapsible (one click to open), while tool_calls still
-	// group among themselves.
-	const GROUPABLE_DETAIL_TYPES = new Set(['tool_calls', 'code_interpreter']);
+	// Claude Code style grouping: a turn's reasoning + tool_calls +
+	// code_interpreter collapse into one ConsecutiveDetailsGroup that summarizes
+	// the work ("Explored · thought 2 times, 3 Grep") and, while it's still
+	// working, auto-expands so the user can watch the thinking and tool calls
+	// live (see ConsecutiveDetailsGroup). Subagent tool calls are pulled out
+	// separately into their own labeled group (isSubagentToolToken below), so a
+	// subagent's run never folds into the main-agent summary.
+	const GROUPABLE_DETAIL_TYPES = new Set(['tool_calls', 'reasoning', 'code_interpreter']);
 
 	const isGroupableDetailToken = (token: Token & { attributes?: { type?: string } }) => {
 		return token?.type === 'details' && GROUPABLE_DETAIL_TYPES.has(token?.attributes?.type ?? '');
@@ -124,6 +122,29 @@
 			token?.attributes?.type === 'tool_calls' &&
 			!!token?.attributes?.parent
 		);
+	};
+
+	// Out-of-band detail blocks that render nothing inline (the hidden
+	// tool_explorer sidebar trigger, the end-of-turn results button). The pipe
+	// emits tool_explorer live, mid-turn, so it interleaves with the real tool
+	// calls — it must not break a run of groupable work the way a visible block
+	// would. Treated as transparent: emitted, but never a group boundary.
+	const TRANSPARENT_DETAIL_TYPES = new Set(['tool_explorer', 'search_results_button']);
+	const isTransparentDetailToken = (token: any) => {
+		return token?.type === 'details' && TRANSPARENT_DETAIL_TYPES.has(token?.attributes?.type ?? '');
+	};
+
+	// Blank filler between blocks — a marked ``space`` token (blank line) or a
+	// whitespace-only text/paragraph/html token. These must not break a run of
+	// groupable details: ``tool_A``, blank, ``tool_B`` should still group.
+	const isBlankToken = (token: any) => {
+		if (!token) return false;
+		if (token.type === 'space') return true;
+		if (token.type === 'text' || token.type === 'paragraph' || token.type === 'html') {
+			const raw = token.raw ?? token.text ?? '';
+			return typeof raw === 'string' && raw.trim() === '';
+		}
+		return false;
 	};
 
 	const getDisplayTokens = (tokenList: Token[] = []) => {
@@ -144,6 +165,9 @@
 		// Token objects with the synthetic detail_group / subagent_group nodes.
 		const displayTokens: any[] = [];
 		let detailGroup: any[] = [];
+		// Blank tokens seen since the last meaningful token, held until we know
+		// whether they sit inside a group (drop) or end it (keep).
+		let pendingBlanks: any[] = [];
 		const emittedSubagents = new Set<string>();
 
 		const flushDetailGroup = () => {
@@ -159,10 +183,18 @@
 			detailGroup = [];
 		};
 
+		const flushPendingBlanks = () => {
+			for (const blank of pendingBlanks) {
+				displayTokens.push(blank);
+			}
+			pendingBlanks = [];
+		};
+
 		for (const token of tokenList) {
 			if (isSubagentToolToken(token)) {
 				// A subagent group breaks any run of generic groupable details.
 				flushDetailGroup();
+				flushPendingBlanks();
 				const attrs = (token as any)?.attributes ?? {};
 				const pid = attrs.parent ?? '';
 				// Emit the group once, at the position of its first child, with
@@ -177,14 +209,31 @@
 					});
 				}
 			} else if (isGroupableDetailToken(token)) {
+				// Blank tokens between grouped details are just inter-block
+				// spacing — drop them so the run isn't split. Before a group
+				// starts they are ordinary content, so emit them.
+				if (detailGroup.length > 0) {
+					pendingBlanks = [];
+				} else {
+					flushPendingBlanks();
+				}
 				detailGroup.push(token);
+			} else if (isTransparentDetailToken(token)) {
+				// Invisible / out-of-band UI detail — emit it but keep any open
+				// run of grouped work intact (it renders nothing inline, so its
+				// position relative to the group does not matter).
+				displayTokens.push(token);
+			} else if (isBlankToken(token)) {
+				pendingBlanks.push(token);
 			} else {
 				flushDetailGroup();
+				flushPendingBlanks();
 				displayTokens.push(token);
 			}
 		}
 
 		flushDetailGroup();
+		flushPendingBlanks();
 
 		return displayTokens;
 	};
