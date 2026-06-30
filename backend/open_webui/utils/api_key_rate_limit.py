@@ -72,9 +72,19 @@ def check_api_key_rate_limit(request, user) -> None:
         return
 
     limiter = RateLimiter(get_redis_client(), limit=limit, window=window)
-    if limiter.is_limited(f'apikey:{user.id}'):
+    key = f'apikey:{user.id}'
+
+    # Decide using the current count WITHOUT incrementing, so a rejected (429)
+    # request does not consume quota. Otherwise a client that keeps hammering
+    # would keep bumping the counter and stay blocked well past the window —
+    # i.e. it would not be a clean "limit per window". Only an allowed request
+    # is recorded (is_limited increments; its return is moot here since we
+    # already know we're under the limit).
+    if limiter.get_count(key) >= limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail='API key rate limit exceeded. Please slow down and try again later.',
             headers={'Retry-After': str(window)},
         )
+
+    limiter.is_limited(key)
