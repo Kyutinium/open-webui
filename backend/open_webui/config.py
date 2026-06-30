@@ -378,6 +378,51 @@ API_KEYS_ALLOWED_ENDPOINTS = PersistentConfig(
     os.environ.get('API_KEYS_ALLOWED_ENDPOINTS', os.environ.get('API_KEY_ALLOWED_ENDPOINTS', '')),
 )
 
+# Per-user request rate limit for API-key traffic on chat completions. UI
+# sessions are never limited. Two tiers (day/night) so daytime can be tighter;
+# the active tier is chosen by the current hour in API_KEY_RATE_LIMIT_TZ.
+API_KEY_RATE_LIMIT_ENABLED = PersistentConfig(
+    'API_KEY_RATE_LIMIT_ENABLED',
+    'auth.api_key.rate_limit.enabled',
+    os.environ.get('API_KEY_RATE_LIMIT_ENABLED', 'False').lower() == 'true',
+)
+
+API_KEY_RATE_LIMIT_WINDOW = PersistentConfig(
+    'API_KEY_RATE_LIMIT_WINDOW',
+    'auth.api_key.rate_limit.window',
+    int(os.environ.get('API_KEY_RATE_LIMIT_WINDOW', '300')),
+)
+
+API_KEY_RATE_LIMIT_DAY = PersistentConfig(
+    'API_KEY_RATE_LIMIT_DAY',
+    'auth.api_key.rate_limit.day',
+    int(os.environ.get('API_KEY_RATE_LIMIT_DAY', '1')),
+)
+
+API_KEY_RATE_LIMIT_NIGHT = PersistentConfig(
+    'API_KEY_RATE_LIMIT_NIGHT',
+    'auth.api_key.rate_limit.night',
+    int(os.environ.get('API_KEY_RATE_LIMIT_NIGHT', '5')),
+)
+
+API_KEY_RATE_LIMIT_DAY_START = PersistentConfig(
+    'API_KEY_RATE_LIMIT_DAY_START',
+    'auth.api_key.rate_limit.day_start',
+    int(os.environ.get('API_KEY_RATE_LIMIT_DAY_START', '7')),
+)
+
+API_KEY_RATE_LIMIT_DAY_END = PersistentConfig(
+    'API_KEY_RATE_LIMIT_DAY_END',
+    'auth.api_key.rate_limit.day_end',
+    int(os.environ.get('API_KEY_RATE_LIMIT_DAY_END', '23')),
+)
+
+API_KEY_RATE_LIMIT_TZ = PersistentConfig(
+    'API_KEY_RATE_LIMIT_TZ',
+    'auth.api_key.rate_limit.tz',
+    os.environ.get('API_KEY_RATE_LIMIT_TZ', 'Asia/Seoul'),
+)
+
 JWT_EXPIRES_IN = PersistentConfig('JWT_EXPIRES_IN', 'auth.jwt_expiry', os.environ.get('JWT_EXPIRES_IN', '4w'))
 
 if JWT_EXPIRES_IN.value == '-1':

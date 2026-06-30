@@ -395,6 +395,13 @@ from open_webui.config import (
     ENABLE_API_KEYS,
     ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS,
     API_KEYS_ALLOWED_ENDPOINTS,
+    API_KEY_RATE_LIMIT_ENABLED,
+    API_KEY_RATE_LIMIT_WINDOW,
+    API_KEY_RATE_LIMIT_DAY,
+    API_KEY_RATE_LIMIT_NIGHT,
+    API_KEY_RATE_LIMIT_DAY_START,
+    API_KEY_RATE_LIMIT_DAY_END,
+    API_KEY_RATE_LIMIT_TZ,
     ENABLE_FOLDERS,
     FOLDER_MAX_FILE_COUNT,
     ENABLE_AUTOMATIONS,
@@ -565,6 +572,7 @@ from open_webui.utils.auth import (
     get_verified_user,
     create_admin_user,
 )
+from open_webui.utils.api_key_rate_limit import check_api_key_rate_limit
 from open_webui.utils.plugin import install_tool_and_function_dependencies
 from open_webui.utils.oauth import (
     get_oauth_client_info_with_dynamic_client_registration,
@@ -892,6 +900,14 @@ app.state.config.ENABLE_PASSWORD_CHANGE_FORM = ENABLE_PASSWORD_CHANGE_FORM
 app.state.config.ENABLE_API_KEYS = ENABLE_API_KEYS
 app.state.config.ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS
 app.state.config.API_KEYS_ALLOWED_ENDPOINTS = API_KEYS_ALLOWED_ENDPOINTS
+
+app.state.config.API_KEY_RATE_LIMIT_ENABLED = API_KEY_RATE_LIMIT_ENABLED
+app.state.config.API_KEY_RATE_LIMIT_WINDOW = API_KEY_RATE_LIMIT_WINDOW
+app.state.config.API_KEY_RATE_LIMIT_DAY = API_KEY_RATE_LIMIT_DAY
+app.state.config.API_KEY_RATE_LIMIT_NIGHT = API_KEY_RATE_LIMIT_NIGHT
+app.state.config.API_KEY_RATE_LIMIT_DAY_START = API_KEY_RATE_LIMIT_DAY_START
+app.state.config.API_KEY_RATE_LIMIT_DAY_END = API_KEY_RATE_LIMIT_DAY_END
+app.state.config.API_KEY_RATE_LIMIT_TZ = API_KEY_RATE_LIMIT_TZ
 
 app.state.config.JWT_EXPIRES_IN = JWT_EXPIRES_IN
 
@@ -1582,6 +1598,9 @@ async def chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
+    # Throttle API-key traffic (UI sessions are exempt). No-op unless enabled.
+    check_api_key_rate_limit(request, user)
+
     if not request.app.state.MODELS:
         await get_all_models(request, user=user)
 
