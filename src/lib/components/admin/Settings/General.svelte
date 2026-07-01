@@ -430,6 +430,95 @@
 								</div>
 							</div>
 						{/if}
+
+						<div class="mb-2.5 flex w-full justify-between pr-2">
+							<div class=" self-center text-xs font-medium">
+								{$i18n.t('API Key Rate Limit')}
+							</div>
+
+							<Switch bind:state={adminConfig.API_KEY_RATE_LIMIT_ENABLED} />
+						</div>
+
+						{#if adminConfig?.API_KEY_RATE_LIMIT_ENABLED}
+							<div class="flex w-full flex-col pr-2 mb-2.5 gap-2">
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Window (seconds)')}
+									</div>
+									<input
+										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+										type="number"
+										min="1"
+										bind:value={adminConfig.API_KEY_RATE_LIMIT_WINDOW}
+									/>
+								</div>
+
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Daytime limit (requests per window)')}
+									</div>
+									<input
+										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+										type="number"
+										min="0"
+										bind:value={adminConfig.API_KEY_RATE_LIMIT_DAY}
+									/>
+								</div>
+
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Nighttime limit (requests per window)')}
+									</div>
+									<input
+										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+										type="number"
+										min="0"
+										bind:value={adminConfig.API_KEY_RATE_LIMIT_NIGHT}
+									/>
+								</div>
+
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Daytime hours (start–end)')}
+									</div>
+									<div class="flex items-center gap-1">
+										<input
+											class="w-12 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+											type="number"
+											min="0"
+											max="23"
+											bind:value={adminConfig.API_KEY_RATE_LIMIT_DAY_START}
+										/>
+										<span class="text-xs text-gray-400">–</span>
+										<input
+											class="w-12 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+											type="number"
+											min="0"
+											max="24"
+											bind:value={adminConfig.API_KEY_RATE_LIMIT_DAY_END}
+										/>
+									</div>
+								</div>
+
+								<div class="flex w-full justify-between">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Timezone')}
+									</div>
+									<input
+										class="w-40 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+										type="text"
+										placeholder="Asia/Seoul"
+										bind:value={adminConfig.API_KEY_RATE_LIMIT_TZ}
+									/>
+								</div>
+
+								<div class="text-xs text-gray-400 dark:text-gray-500">
+									{$i18n.t(
+										'Applies to API key requests on chat completions only. UI sessions are never limited.'
+									)}
+								</div>
+							</div>
+						{/if}
 					{/if}
 
 					<div class=" mb-2.5 w-full justify-between">
