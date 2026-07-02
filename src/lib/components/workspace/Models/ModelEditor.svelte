@@ -877,7 +877,6 @@
 								<input
 									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 									type="number"
-									min="-1"
 									placeholder={$i18n.t('Default')}
 									bind:value={apiKeyRateLimit.day}
 								/>
@@ -889,7 +888,6 @@
 								<input
 									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 									type="number"
-									min="-1"
 									placeholder={$i18n.t('Default')}
 									bind:value={apiKeyRateLimit.night}
 								/>

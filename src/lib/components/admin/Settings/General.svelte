@@ -460,7 +460,6 @@
 									<input
 										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 										type="number"
-										min="-1"
 										bind:value={adminConfig.API_KEY_RATE_LIMIT_DAY}
 									/>
 								</div>
@@ -472,7 +471,6 @@
 									<input
 										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 										type="number"
-										min="-1"
 										bind:value={adminConfig.API_KEY_RATE_LIMIT_NIGHT}
 									/>
 								</div>
