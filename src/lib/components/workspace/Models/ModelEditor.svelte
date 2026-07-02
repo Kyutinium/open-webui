@@ -237,7 +237,8 @@
 			const toNum = (v) => {
 				if (v === '' || v === null || v === undefined) return null;
 				const n = parseInt(v, 10);
-				return Number.isNaN(n) ? null : Math.max(0, n);
+				// Allow -1 (unlimited); 0 = block, >0 = requests per window.
+				return Number.isNaN(n) ? null : Math.max(-1, n);
 			};
 			const rl = {
 				window: toNum(apiKeyRateLimit.window),
@@ -854,7 +855,7 @@
 						<div class="mb-2 text-sm font-medium">{$i18n.t('API Key Rate Limit')}</div>
 						<div class="text-xs text-gray-400 dark:text-gray-500 mb-2">
 							{$i18n.t(
-								'Per-model override for API key requests (UI sessions and admins are exempt). Leave blank to use the global default; set 0 for unlimited.'
+								'Per-model override for API key requests (UI sessions and admins are exempt). Leave blank to use the global default; -1 for unlimited, 0 to block.'
 							)}
 						</div>
 
@@ -876,7 +877,7 @@
 								<input
 									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 									type="number"
-									min="0"
+									min="-1"
 									placeholder={$i18n.t('Default')}
 									bind:value={apiKeyRateLimit.day}
 								/>
@@ -888,7 +889,7 @@
 								<input
 									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 									type="number"
-									min="0"
+									min="-1"
 									placeholder={$i18n.t('Default')}
 									bind:value={apiKeyRateLimit.night}
 								/>

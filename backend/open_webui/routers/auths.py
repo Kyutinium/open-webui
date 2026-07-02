@@ -1054,11 +1054,12 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     request.app.state.config.API_KEY_RATE_LIMIT_WINDOW = _int_or(
         form_data.API_KEY_RATE_LIMIT_WINDOW, 300, lo=1
     )
+    # -1 (or lower) = unlimited, 0 = block all, >0 = requests per window.
     request.app.state.config.API_KEY_RATE_LIMIT_DAY = _int_or(
-        form_data.API_KEY_RATE_LIMIT_DAY, 1, lo=0
+        form_data.API_KEY_RATE_LIMIT_DAY, 1, lo=-1
     )
     request.app.state.config.API_KEY_RATE_LIMIT_NIGHT = _int_or(
-        form_data.API_KEY_RATE_LIMIT_NIGHT, 5, lo=0
+        form_data.API_KEY_RATE_LIMIT_NIGHT, 5, lo=-1
     )
     request.app.state.config.API_KEY_RATE_LIMIT_DAY_START = _int_or(
         form_data.API_KEY_RATE_LIMIT_DAY_START, 7, lo=0, hi=23

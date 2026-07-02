@@ -9,8 +9,9 @@ A global default (day/night limits over a shared window, with the active tier
 chosen by the current hour in a configurable timezone) is set from admin
 config. Individual models may override the window / day / night *limits* via
 ``meta.api_key_rate_limit`` (edited in the Models screen); the day/night
-boundary and timezone stay global. A per-model limit of 0 (or a global limit of
-0) means unlimited for that tier. Counters are keyed per (user, model).
+boundary and timezone stay global. Limit semantics for a tier: ``-1`` (or any
+negative) means unlimited, ``0`` blocks all API-key traffic, ``>0`` allows that
+many requests per window. Counters are keyed per (user, model).
 """
 
 from datetime import datetime
@@ -77,7 +78,7 @@ def check_api_key_rate_limit(request, user, model_id=None) -> None:
     """Raise HTTP 429 if this API-key request exceeds the active rate limit.
 
     No-op for UI sessions, admins, when the feature is disabled, or when the
-    effective limit/window is non-positive (unlimited).
+    effective limit is negative (unlimited). A limit of 0 blocks all traffic.
     """
     config = request.app.state.config
 
@@ -95,8 +96,20 @@ def check_api_key_rate_limit(request, user, model_id=None) -> None:
     night = _coalesce_int(override.get('night'), config.API_KEY_RATE_LIMIT_NIGHT)
 
     limit = day if _is_daytime(config) else night
-    if limit <= 0 or window <= 0:
+    # Negative limit = unlimited; a non-positive window is treated as unlimited.
+    if limit < 0 or window <= 0:
         return
+
+    def _reject():
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='API key rate limit exceeded. Please slow down and try again later.',
+            headers={'Retry-After': str(window)},
+        )
+
+    # limit == 0 blocks all API-key traffic for this model/tier.
+    if limit == 0:
+        _reject()
 
     limiter = RateLimiter(get_redis_client(), limit=limit, window=window)
     # Per (user, model) so each model has its own budget.
@@ -105,10 +118,6 @@ def check_api_key_rate_limit(request, user, model_id=None) -> None:
     # Decide from the current count WITHOUT incrementing, so a rejected (429)
     # request does not consume quota; only an allowed request is recorded.
     if limiter.get_count(key) >= limit:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='API key rate limit exceeded. Please slow down and try again later.',
-            headers={'Retry-After': str(window)},
-        )
+        _reject()
 
     limiter.is_limited(key)

@@ -460,7 +460,7 @@
 									<input
 										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 										type="number"
-										min="0"
+										min="-1"
 										bind:value={adminConfig.API_KEY_RATE_LIMIT_DAY}
 									/>
 								</div>
@@ -472,7 +472,7 @@
 									<input
 										class="w-24 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
 										type="number"
-										min="0"
+										min="-1"
 										bind:value={adminConfig.API_KEY_RATE_LIMIT_NIGHT}
 									/>
 								</div>
@@ -514,7 +514,7 @@
 
 								<div class="text-xs text-gray-400 dark:text-gray-500">
 									{$i18n.t(
-										'Applies to API key requests on chat completions only. UI sessions are never limited.'
+										'Applies to API key requests on chat completions only. UI sessions and admins are exempt. Limit: -1 = unlimited, 0 = block, >0 = requests per window.'
 									)}
 								</div>
 							</div>
