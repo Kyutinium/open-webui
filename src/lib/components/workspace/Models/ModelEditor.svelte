@@ -106,6 +106,11 @@
 	let terminalId = '';
 	let tts = { voice: '' };
 
+	// Per-model API-key rate limit override. Blank inherits the global admin
+	// default; 0 means unlimited for this model. Only applies to API-key
+	// traffic on chat completions (UI sessions and admins are exempt).
+	let apiKeyRateLimit = { window: '', day: '', night: '' };
+
 	const submitHandler = async () => {
 		loading = true;
 
@@ -228,6 +233,25 @@
 			}
 		}
 
+		{
+			const toNum = (v) => {
+				if (v === '' || v === null || v === undefined) return null;
+				const n = parseInt(v, 10);
+				return Number.isNaN(n) ? null : Math.max(0, n);
+			};
+			const rl = {
+				window: toNum(apiKeyRateLimit.window),
+				day: toNum(apiKeyRateLimit.day),
+				night: toNum(apiKeyRateLimit.night)
+			};
+			const cleaned = Object.fromEntries(Object.entries(rl).filter(([, v]) => v !== null));
+			if (Object.keys(cleaned).length > 0) {
+				info.meta.api_key_rate_limit = cleaned;
+			} else if (info.meta.api_key_rate_limit) {
+				delete info.meta.api_key_rate_limit;
+			}
+		}
+
 		info.params.system = system.trim() === '' ? null : system;
 		info.params.stop = params.stop
 			? (typeof params.stop === 'string' ? params.stop.split(',') : params.stop).filter((s) =>
@@ -328,6 +352,12 @@
 			builtinTools = model?.meta?.builtinTools ?? builtinTools;
 			terminalId = model?.meta?.terminalId ?? '';
 			tts = { voice: model?.meta?.tts?.voice ?? '' };
+
+			apiKeyRateLimit = {
+				window: model?.meta?.api_key_rate_limit?.window ?? '',
+				day: model?.meta?.api_key_rate_limit?.day ?? '',
+				night: model?.meta?.api_key_rate_limit?.night ?? ''
+			};
 
 			accessGrants = model?.access_grants ?? [];
 
@@ -816,6 +846,54 @@
 
 					<div class="my-4">
 						<Capabilities bind:capabilities />
+					</div>
+
+					<hr class=" border-gray-100/30 dark:border-gray-850/30 my-4" />
+
+					<div class="my-4">
+						<div class="mb-2 text-sm font-medium">{$i18n.t('API Key Rate Limit')}</div>
+						<div class="text-xs text-gray-400 dark:text-gray-500 mb-2">
+							{$i18n.t(
+								'Per-model override for API key requests (UI sessions and admins are exempt). Leave blank to use the global default; set 0 for unlimited.'
+							)}
+						</div>
+
+						<div class="flex flex-col gap-2">
+							<div class="flex w-full justify-between items-center">
+								<div class="text-xs font-medium">{$i18n.t('Window (seconds)')}</div>
+								<input
+									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+									type="number"
+									min="1"
+									placeholder={$i18n.t('Default')}
+									bind:value={apiKeyRateLimit.window}
+								/>
+							</div>
+							<div class="flex w-full justify-between items-center">
+								<div class="text-xs font-medium">
+									{$i18n.t('Daytime limit (requests per window)')}
+								</div>
+								<input
+									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+									type="number"
+									min="0"
+									placeholder={$i18n.t('Default')}
+									bind:value={apiKeyRateLimit.day}
+								/>
+							</div>
+							<div class="flex w-full justify-between items-center">
+								<div class="text-xs font-medium">
+									{$i18n.t('Nighttime limit (requests per window)')}
+								</div>
+								<input
+									class="w-28 text-sm text-right dark:text-gray-300 bg-transparent outline-hidden"
+									type="number"
+									min="0"
+									placeholder={$i18n.t('Default')}
+									bind:value={apiKeyRateLimit.night}
+								/>
+							</div>
+						</div>
 					</div>
 
 					{#if Object.keys(capabilities).filter((key) => capabilities[key]).length > 0}

@@ -1,14 +1,16 @@
-"""Per-user request rate limiting for API-key traffic.
+"""Per-user, per-model request rate limiting for API-key traffic.
 
-Open WebUI has no built-in usage cap on API keys, so a leaked or abused key can
-hammer the chat-completion endpoint unchecked. This guard throttles requests
-that authenticated via an API key (UI sessions are exempt — they set
-``request.state.auth_type`` to ``"session"``).
+Open WebUI has no usage cap on API keys, so a leaked or abused key can hammer
+the chat-completion endpoint unchecked. This guard throttles requests that
+authenticated via an API key (UI sessions set ``request.state.auth_type`` to
+``"session"`` and are exempt; admins are exempt too).
 
-Two tiers are supported so daytime can be tighter than night: the active
-per-window request limit is picked from the current hour in the configured
-timezone. All knobs are ``PersistentConfig`` and tunable live from the admin
-config endpoint — no restart needed.
+A global default (day/night limits over a shared window, with the active tier
+chosen by the current hour in a configurable timezone) is set from admin
+config. Individual models may override the window / day / night *limits* via
+``meta.api_key_rate_limit`` (edited in the Models screen); the day/night
+boundary and timezone stay global. A per-model limit of 0 (or a global limit of
+0) means unlimited for that tier. Counters are keyed per (user, model).
 """
 
 from datetime import datetime
@@ -35,8 +37,8 @@ def _current_hour(tz_name: str) -> int:
     return datetime.now(tz).hour
 
 
-def _active_limit(config) -> int:
-    """Pick the day or night request limit for the current hour.
+def _is_daytime(config) -> bool:
+    """Whether now falls in the configured daytime window.
 
     Daytime is ``[day_start, day_end)``; a range that wraps past midnight
     (start > end) is handled so e.g. 22→6 still means "night hours".
@@ -44,20 +46,38 @@ def _active_limit(config) -> int:
     start = config.API_KEY_RATE_LIMIT_DAY_START
     end = config.API_KEY_RATE_LIMIT_DAY_END
     hour = _current_hour(config.API_KEY_RATE_LIMIT_TZ)
-
     if start <= end:
-        is_day = start <= hour < end
-    else:
-        is_day = hour >= start or hour < end
-
-    return config.API_KEY_RATE_LIMIT_DAY if is_day else config.API_KEY_RATE_LIMIT_NIGHT
+        return start <= hour < end
+    return hour >= start or hour < end
 
 
-def check_api_key_rate_limit(request, user) -> None:
+def _coalesce_int(value, default) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _model_override(request, model_id) -> dict:
+    """Per-model ``meta.api_key_rate_limit`` override, or ``{}``.
+
+    Read from the in-memory model registry (no DB round-trip). Models without a
+    workspace entry simply have no override and fall back to the global config.
+    """
+    if not model_id:
+        return {}
+    models = getattr(request.app.state, 'MODELS', None) or {}
+    entry = models.get(model_id) or {}
+    meta = (entry.get('info') or {}).get('meta') or {}
+    override = meta.get('api_key_rate_limit')
+    return override if isinstance(override, dict) else {}
+
+
+def check_api_key_rate_limit(request, user, model_id=None) -> None:
     """Raise HTTP 429 if this API-key request exceeds the active rate limit.
 
-    No-op for UI sessions, when the feature is disabled, or when the active
-    limit/window is non-positive.
+    No-op for UI sessions, admins, when the feature is disabled, or when the
+    effective limit/window is non-positive (unlimited).
     """
     config = request.app.state.config
 
@@ -69,20 +89,21 @@ def check_api_key_rate_limit(request, user) -> None:
     if getattr(user, 'role', None) == 'admin':
         return
 
-    limit = _active_limit(config)
-    window = int(config.API_KEY_RATE_LIMIT_WINDOW or 0)
+    override = _model_override(request, model_id)
+    window = _coalesce_int(override.get('window'), config.API_KEY_RATE_LIMIT_WINDOW)
+    day = _coalesce_int(override.get('day'), config.API_KEY_RATE_LIMIT_DAY)
+    night = _coalesce_int(override.get('night'), config.API_KEY_RATE_LIMIT_NIGHT)
+
+    limit = day if _is_daytime(config) else night
     if limit <= 0 or window <= 0:
         return
 
     limiter = RateLimiter(get_redis_client(), limit=limit, window=window)
-    key = f'apikey:{user.id}'
+    # Per (user, model) so each model has its own budget.
+    key = f'apikey:{user.id}:{model_id or "*"}'
 
-    # Decide using the current count WITHOUT incrementing, so a rejected (429)
-    # request does not consume quota. Otherwise a client that keeps hammering
-    # would keep bumping the counter and stay blocked well past the window —
-    # i.e. it would not be a clean "limit per window". Only an allowed request
-    # is recorded (is_limited increments; its return is moot here since we
-    # already know we're under the limit).
+    # Decide from the current count WITHOUT incrementing, so a rejected (429)
+    # request does not consume quota; only an allowed request is recorded.
     if limiter.get_count(key) >= limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

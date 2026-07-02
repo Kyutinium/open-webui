@@ -1598,15 +1598,17 @@ async def chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
-    # Throttle API-key traffic (UI sessions are exempt). No-op unless enabled.
-    check_api_key_rate_limit(request, user)
-
     if not request.app.state.MODELS:
         await get_all_models(request, user=user)
 
     model_id = form_data.get('model', None)
     model_item = form_data.pop('model_item', {})
     tasks = form_data.pop('background_tasks', None)
+
+    # Throttle API-key traffic per (user, model). UI sessions and admins are
+    # exempt; no-op unless enabled. Runs after MODELS is populated so the
+    # per-model meta override can be read.
+    check_api_key_rate_limit(request, user, model_id=model_id)
 
     metadata = {}
     try:
