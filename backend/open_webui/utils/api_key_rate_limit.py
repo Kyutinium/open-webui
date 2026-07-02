@@ -111,7 +111,12 @@ def check_api_key_rate_limit(request, user, model_id=None) -> None:
     if limit == 0:
         _reject()
 
-    limiter = RateLimiter(get_redis_client(), limit=limit, window=window)
+    # RateLimiter buckets the window (default 60s) and sums num_buckets+1, so a
+    # sub-60s window would collapse to one bucket and larger windows round up by
+    # a full 60s. Scale the bucket to ~10 per window: sub-60s windows work and
+    # the effective window overshoots by only ~10% (≈11 keys read per request).
+    bucket_size = max(1, window // 10)
+    limiter = RateLimiter(get_redis_client(), limit=limit, window=window, bucket_size=bucket_size)
     # Per (user, model) so each model has its own budget.
     key = f'apikey:{user.id}:{model_id or "*"}'
 
