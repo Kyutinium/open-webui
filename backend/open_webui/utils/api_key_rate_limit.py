@@ -65,6 +65,9 @@ def check_api_key_rate_limit(request, user) -> None:
         return
     if getattr(request.state, 'auth_type', None) != 'api_key':
         return
+    # Admins are exempt — their keys are for operational/automation use.
+    if getattr(user, 'role', None) == 'admin':
+        return
 
     limit = _active_limit(config)
     window = int(config.API_KEY_RATE_LIMIT_WINDOW or 0)
