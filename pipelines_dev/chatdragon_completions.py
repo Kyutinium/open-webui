@@ -510,13 +510,22 @@ class Pipeline:
         else:
             log.info("[PIPE] dscrowd_token: NOT FOUND")
 
-        owui_username = meta_headers.get("x-openwebui-user-name", "")
-        if not owui_username and __user__:
+        # Derive identity from the authenticated __user__ (server-injected by
+        # Open WebUI), NOT the client-supplied x-openwebui-user-name header — a
+        # caller could spoof that header to act as another user downstream (the
+        # value flows to MCP servers for permission filtering). Fall back to the
+        # header only when there is no authenticated user context.
+        owui_username = ""
+        if __user__:
             email = __user__.get("email", "")
             if email and "@" in email:
                 owui_username = email.split("@")[0]
             elif email:
                 owui_username = email
+            if not owui_username:
+                owui_username = __user__.get("name", "") or ""
+        if not owui_username:
+            owui_username = meta_headers.get("x-openwebui-user-name", "")
         if owui_username:
             try:
                 owui_username.encode("ascii")
