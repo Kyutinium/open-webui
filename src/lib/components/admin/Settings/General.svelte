@@ -523,7 +523,7 @@
 									)}
 									{#if adminConfig.API_KEY_RATE_LIMIT_BY_GROUP}
 										{$i18n.t(
-											"When aggregating by group, a group's members share one counter per model; users in no group are counted individually."
+											"When aggregating by group, a group's members share one counter per model. A user in one group is charged automatically; a user in several groups must name the group via the 'X-RateLimit-Group' request header; users in no group are counted individually."
 										)}
 									{/if}
 								</div>

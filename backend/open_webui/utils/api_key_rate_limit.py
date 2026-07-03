@@ -1,9 +1,14 @@
-"""Per-user, per-model request rate limiting for API-key traffic.
+"""Per-user / per-group, per-model request rate limiting for API-key traffic.
 
 Open WebUI has no usage cap on API keys, so a leaked or abused key can hammer
 the chat-completion endpoint unchecked. This guard throttles requests that
 authenticated via an API key (UI sessions set ``request.state.auth_type`` to
 ``"session"`` and are exempt; admins are exempt too).
+
+With ``API_KEY_RATE_LIMIT_BY_GROUP`` on, counting is attributed to the user's
+group so a team shares one budget: a single-group user is charged
+automatically (no client change); a multi-group user names the group via the
+``X-RateLimit-Group`` header; users in no group fall back to per-user.
 
 A global default (day/night limits over a shared window, with the active tier
 chosen by the current hour in a configurable timezone) is set from admin
@@ -26,6 +31,9 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - Python < 3.9
     ZoneInfo = None
+
+# Header a multi-group caller uses to name which group's budget to charge.
+RATE_LIMIT_GROUP_HEADER = 'x-ratelimit-group'
 
 
 def _current_hour(tz_name: str) -> int:
@@ -76,22 +84,61 @@ def _model_override(request, model_id) -> dict:
 
 
 async def _counter_keys(request, user, model_id) -> list:
-    """Counter keys this request draws from.
+    """Counter key(s) this request draws from (team-budget attribution).
 
-    Per (user, model) by default. When ``API_KEY_RATE_LIMIT_BY_GROUP`` is on and
-    the user belongs to group(s), it draws from one pooled counter per group
-    (members share it); users in no group still count per-user.
+    Per (user, model) by default. When ``API_KEY_RATE_LIMIT_BY_GROUP`` is on:
+    a user in exactly one group draws from that group's shared counter (no
+    client change); a user in no group still counts per-user; a user in
+    multiple groups must name which group's budget to charge via the
+    ``X-RateLimit-Group`` header (400 if missing/unknown/ambiguous).
     """
     suffix = model_id or '*'
     config = request.app.state.config
-    if getattr(config, 'API_KEY_RATE_LIMIT_BY_GROUP', False):
-        try:
-            groups = await Groups.get_groups_by_member_id(user.id)
-        except Exception:
-            groups = []
-        if groups:
-            return [f'apikey:group:{g.id}:{suffix}' for g in groups]
-    return [f'apikey:{user.id}:{suffix}']
+
+    if not getattr(config, 'API_KEY_RATE_LIMIT_BY_GROUP', False):
+        return [f'apikey:{user.id}:{suffix}']
+
+    try:
+        groups = await Groups.get_groups_by_member_id(user.id)
+    except Exception:
+        groups = []
+
+    if not groups:
+        # No group to attribute to — count per-user.
+        return [f'apikey:{user.id}:{suffix}']
+    if len(groups) == 1:
+        # Single group: attribute automatically, no client change needed.
+        return [f'apikey:group:{groups[0].id}:{suffix}']
+
+    # Multiple groups: the caller must say which group's budget to charge.
+    names = [g.name for g in groups]
+    requested = (request.headers.get(RATE_LIMIT_GROUP_HEADER) or '').strip()
+    if not requested:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"You belong to multiple groups; set the '{RATE_LIMIT_GROUP_HEADER}' "
+                f"header to the group whose rate-limit budget to use. One of: "
+                f"{', '.join(names)}."
+            ),
+        )
+    matches = [g for g in groups if g.name == requested]
+    if len(matches) == 1:
+        return [f'apikey:group:{matches[0].id}:{suffix}']
+    if not matches:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"'{requested}' is not one of your groups. One of: {', '.join(names)}."
+            ),
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Group name '{requested}' is ambiguous (multiple groups share it); "
+            f"give the groups unique names."
+        ),
+    )
 
 
 async def check_api_key_rate_limit(request, user, model_id=None) -> None:
@@ -138,11 +185,12 @@ async def check_api_key_rate_limit(request, user, model_id=None) -> None:
     bucket_size = max(1, window // 10)
     limiter = RateLimiter(get_redis_client(), limit=limit, window=window, bucket_size=bucket_size)
 
+    # Resolve the counter(s) — per-user, or the attributed group (may 400 if a
+    # multi-group caller didn't name a group).
     keys = await _counter_keys(request, user, model_id)
 
     # Decide from the current count WITHOUT incrementing, so a rejected (429)
-    # request does not consume quota. Block if ANY pool is exhausted, and only
-    # record the hit once every pool has room (so no pool is charged on reject).
+    # request does not consume quota; only record the hit once there's room.
     if any(limiter.get_count(k) >= limit for k in keys):
         _reject()
 
