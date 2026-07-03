@@ -402,6 +402,7 @@ from open_webui.config import (
     API_KEY_RATE_LIMIT_DAY_START,
     API_KEY_RATE_LIMIT_DAY_END,
     API_KEY_RATE_LIMIT_TZ,
+    API_KEY_RATE_LIMIT_BY_GROUP,
     ENABLE_FOLDERS,
     FOLDER_MAX_FILE_COUNT,
     ENABLE_AUTOMATIONS,
@@ -908,6 +909,7 @@ app.state.config.API_KEY_RATE_LIMIT_NIGHT = API_KEY_RATE_LIMIT_NIGHT
 app.state.config.API_KEY_RATE_LIMIT_DAY_START = API_KEY_RATE_LIMIT_DAY_START
 app.state.config.API_KEY_RATE_LIMIT_DAY_END = API_KEY_RATE_LIMIT_DAY_END
 app.state.config.API_KEY_RATE_LIMIT_TZ = API_KEY_RATE_LIMIT_TZ
+app.state.config.API_KEY_RATE_LIMIT_BY_GROUP = API_KEY_RATE_LIMIT_BY_GROUP
 
 app.state.config.JWT_EXPIRES_IN = JWT_EXPIRES_IN
 
@@ -1598,15 +1600,17 @@ async def chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
-    # Throttle API-key traffic (UI sessions are exempt). No-op unless enabled.
-    check_api_key_rate_limit(request, user)
-
     if not request.app.state.MODELS:
         await get_all_models(request, user=user)
 
     model_id = form_data.get('model', None)
     model_item = form_data.pop('model_item', {})
     tasks = form_data.pop('background_tasks', None)
+
+    # Throttle API-key traffic per (user/group, model). UI sessions and admins
+    # are exempt; no-op unless enabled. Runs after MODELS is populated so the
+    # per-model meta override can be read.
+    await check_api_key_rate_limit(request, user, model_id=model_id)
 
     metadata = {}
     try:

@@ -969,6 +969,7 @@ async def get_admin_config(request: Request, user=Depends(get_admin_user)):
         'API_KEY_RATE_LIMIT_DAY_START': request.app.state.config.API_KEY_RATE_LIMIT_DAY_START,
         'API_KEY_RATE_LIMIT_DAY_END': request.app.state.config.API_KEY_RATE_LIMIT_DAY_END,
         'API_KEY_RATE_LIMIT_TZ': request.app.state.config.API_KEY_RATE_LIMIT_TZ,
+        'API_KEY_RATE_LIMIT_BY_GROUP': request.app.state.config.API_KEY_RATE_LIMIT_BY_GROUP,
         'DEFAULT_USER_ROLE': request.app.state.config.DEFAULT_USER_ROLE,
         'DEFAULT_GROUP_ID': request.app.state.config.DEFAULT_GROUP_ID,
         'JWT_EXPIRES_IN': request.app.state.config.JWT_EXPIRES_IN,
@@ -1006,6 +1007,7 @@ class AdminConfig(BaseModel):
     API_KEY_RATE_LIMIT_DAY_START: Optional[int | str] = None
     API_KEY_RATE_LIMIT_DAY_END: Optional[int | str] = None
     API_KEY_RATE_LIMIT_TZ: str
+    API_KEY_RATE_LIMIT_BY_GROUP: bool = False
     DEFAULT_USER_ROLE: str
     DEFAULT_GROUP_ID: str
     JWT_EXPIRES_IN: str
@@ -1054,11 +1056,12 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     request.app.state.config.API_KEY_RATE_LIMIT_WINDOW = _int_or(
         form_data.API_KEY_RATE_LIMIT_WINDOW, 300, lo=1
     )
+    # -1 (or lower) = unlimited, 0 = block all, >0 = requests per window.
     request.app.state.config.API_KEY_RATE_LIMIT_DAY = _int_or(
-        form_data.API_KEY_RATE_LIMIT_DAY, 1, lo=0
+        form_data.API_KEY_RATE_LIMIT_DAY, 1, lo=-1
     )
     request.app.state.config.API_KEY_RATE_LIMIT_NIGHT = _int_or(
-        form_data.API_KEY_RATE_LIMIT_NIGHT, 5, lo=0
+        form_data.API_KEY_RATE_LIMIT_NIGHT, 5, lo=-1
     )
     request.app.state.config.API_KEY_RATE_LIMIT_DAY_START = _int_or(
         form_data.API_KEY_RATE_LIMIT_DAY_START, 7, lo=0, hi=23
@@ -1067,6 +1070,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         form_data.API_KEY_RATE_LIMIT_DAY_END, 23, lo=0, hi=24
     )
     request.app.state.config.API_KEY_RATE_LIMIT_TZ = form_data.API_KEY_RATE_LIMIT_TZ
+    request.app.state.config.API_KEY_RATE_LIMIT_BY_GROUP = form_data.API_KEY_RATE_LIMIT_BY_GROUP
 
     request.app.state.config.ENABLE_FOLDERS = form_data.ENABLE_FOLDERS
     request.app.state.config.FOLDER_MAX_FILE_COUNT = (
@@ -1121,6 +1125,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         'API_KEY_RATE_LIMIT_DAY_START': request.app.state.config.API_KEY_RATE_LIMIT_DAY_START,
         'API_KEY_RATE_LIMIT_DAY_END': request.app.state.config.API_KEY_RATE_LIMIT_DAY_END,
         'API_KEY_RATE_LIMIT_TZ': request.app.state.config.API_KEY_RATE_LIMIT_TZ,
+        'API_KEY_RATE_LIMIT_BY_GROUP': request.app.state.config.API_KEY_RATE_LIMIT_BY_GROUP,
         'DEFAULT_USER_ROLE': request.app.state.config.DEFAULT_USER_ROLE,
         'DEFAULT_GROUP_ID': request.app.state.config.DEFAULT_GROUP_ID,
         'JWT_EXPIRES_IN': request.app.state.config.JWT_EXPIRES_IN,
