@@ -423,6 +423,16 @@ API_KEY_RATE_LIMIT_TZ = PersistentConfig(
     os.environ.get('API_KEY_RATE_LIMIT_TZ', 'Asia/Seoul'),
 )
 
+# When enabled, the rate-limit counter is shared across a user's group(s) — the
+# limit value still comes from the model/global config, but members of a group
+# draw from one pooled counter instead of a per-user one. Users in no group fall
+# back to per-user counting.
+API_KEY_RATE_LIMIT_BY_GROUP = PersistentConfig(
+    'API_KEY_RATE_LIMIT_BY_GROUP',
+    'auth.api_key.rate_limit.by_group',
+    os.environ.get('API_KEY_RATE_LIMIT_BY_GROUP', 'False').lower() == 'true',
+)
+
 JWT_EXPIRES_IN = PersistentConfig('JWT_EXPIRES_IN', 'auth.jwt_expiry', os.environ.get('JWT_EXPIRES_IN', '4w'))
 
 if JWT_EXPIRES_IN.value == '-1':

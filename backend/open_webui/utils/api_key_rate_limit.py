@@ -18,6 +18,7 @@ from datetime import datetime
 
 from fastapi import HTTPException, status
 
+from open_webui.models.groups import Groups
 from open_webui.utils.rate_limit import RateLimiter
 from open_webui.utils.redis import get_redis_client
 
@@ -74,7 +75,26 @@ def _model_override(request, model_id) -> dict:
     return override if isinstance(override, dict) else {}
 
 
-def check_api_key_rate_limit(request, user, model_id=None) -> None:
+async def _counter_keys(request, user, model_id) -> list:
+    """Counter keys this request draws from.
+
+    Per (user, model) by default. When ``API_KEY_RATE_LIMIT_BY_GROUP`` is on and
+    the user belongs to group(s), it draws from one pooled counter per group
+    (members share it); users in no group still count per-user.
+    """
+    suffix = model_id or '*'
+    config = request.app.state.config
+    if getattr(config, 'API_KEY_RATE_LIMIT_BY_GROUP', False):
+        try:
+            groups = await Groups.get_groups_by_member_id(user.id)
+        except Exception:
+            groups = []
+        if groups:
+            return [f'apikey:group:{g.id}:{suffix}' for g in groups]
+    return [f'apikey:{user.id}:{suffix}']
+
+
+async def check_api_key_rate_limit(request, user, model_id=None) -> None:
     """Raise HTTP 429 if this API-key request exceeds the active rate limit.
 
     No-op for UI sessions, admins, when the feature is disabled, or when the
@@ -117,12 +137,14 @@ def check_api_key_rate_limit(request, user, model_id=None) -> None:
     # the effective window overshoots by only ~10% (≈11 keys read per request).
     bucket_size = max(1, window // 10)
     limiter = RateLimiter(get_redis_client(), limit=limit, window=window, bucket_size=bucket_size)
-    # Per (user, model) so each model has its own budget.
-    key = f'apikey:{user.id}:{model_id or "*"}'
+
+    keys = await _counter_keys(request, user, model_id)
 
     # Decide from the current count WITHOUT incrementing, so a rejected (429)
-    # request does not consume quota; only an allowed request is recorded.
-    if limiter.get_count(key) >= limit:
+    # request does not consume quota. Block if ANY pool is exhausted, and only
+    # record the hit once every pool has room (so no pool is charged on reject).
+    if any(limiter.get_count(k) >= limit for k in keys):
         _reject()
 
-    limiter.is_limited(key)
+    for k in keys:
+        limiter.is_limited(k)

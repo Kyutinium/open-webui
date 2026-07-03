@@ -510,10 +510,22 @@
 									/>
 								</div>
 
+								<div class="flex w-full justify-between items-center">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Aggregate limit by group')}
+									</div>
+									<Switch bind:state={adminConfig.API_KEY_RATE_LIMIT_BY_GROUP} />
+								</div>
+
 								<div class="text-xs text-gray-400 dark:text-gray-500">
 									{$i18n.t(
 										'Applies to API key requests on chat completions only. UI sessions and admins are exempt. Limit: -1 = unlimited, 0 = block, >0 = requests per window.'
 									)}
+									{#if adminConfig.API_KEY_RATE_LIMIT_BY_GROUP}
+										{$i18n.t(
+											"When aggregating by group, a group's members share one counter per model; users in no group are counted individually."
+										)}
+									{/if}
 								</div>
 							</div>
 						{/if}
