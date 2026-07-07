@@ -330,22 +330,27 @@
 		savedPath = path;
 		pushNavHistory(path);
 
-		const result = await listFiles(terminal.url, terminal.key, path, chatId ?? undefined);
+		let result: FileEntry[];
+		try {
+			result = await listFiles(terminal.url, terminal.key, path, chatId ?? undefined);
+		} catch (err) {
+			loading = false;
+			entries = [];
+			const msg = err instanceof Error ? err.message : 'Failed to load directory.';
+			error = msg;
+			toast.error(msg);
+			return;
+		}
 		loading = false;
 
 		// Set working directory on the terminal server (fire-and-forget)
 		setCwd(terminal.url, terminal.key, path, chatId ?? undefined);
 
-		if (result === null) {
-			error =
-				'Failed to load directory. Check your Terminal connection in Settings → Integrations.';
-			entries = [];
-		} else {
-			entries = result.sort((a, b) => {
-				if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-				return a.name.localeCompare(b.name);
-			});
-		}
+		error = null;
+		entries = result.sort((a, b) => {
+			if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
 	};
 
 	const openEntry = async (entry: FileEntry) => {
