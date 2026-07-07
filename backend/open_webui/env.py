@@ -229,6 +229,15 @@ SAFE_MODE = os.environ.get('SAFE_MODE', 'false').lower() == 'true'
 
 ENABLE_FORWARD_USER_INFO_HEADERS = os.environ.get('ENABLE_FORWARD_USER_INFO_HEADERS', 'False').lower() == 'true'
 
+# When False, terminal server connections are NOT turned into LLM tools (their
+# OpenAPI spec is not built into tool callables). The file-explorer sidebar
+# still works — it calls the terminal server's /files/* endpoints directly. Set
+# to False for terminal servers that are pure file browsers (e.g. oh-my-gateway),
+# which otherwise expose their whole API as tools and crash chat serialization
+# ("object of type function is not JSON serializable"). Default True preserves
+# existing behavior.
+ENABLE_TERMINAL_TOOLS = os.environ.get('ENABLE_TERMINAL_TOOLS', 'True').lower() == 'true'
+
 # Header names for user info forwarding (customizable via environment variables)
 FORWARD_USER_INFO_HEADER_USER_NAME = os.environ.get('FORWARD_USER_INFO_HEADER_USER_NAME', 'X-OpenWebUI-User-Name')
 FORWARD_USER_INFO_HEADER_USER_ID = os.environ.get('FORWARD_USER_INFO_HEADER_USER_ID', 'X-OpenWebUI-User-Id')
