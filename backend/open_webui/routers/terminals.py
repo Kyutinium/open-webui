@@ -16,7 +16,8 @@ from starlette.background import BackgroundTask
 
 from open_webui.utils.auth import get_verified_user
 from open_webui.utils.access_control import has_connection_access
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
+from open_webui.utils.headers import include_user_info_headers
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, ENABLE_FORWARD_USER_INFO_HEADERS
 from open_webui.models.groups import Groups
 from open_webui.models.users import Users
 
@@ -106,6 +107,14 @@ async def proxy_terminal(
         target_url += f'?{request.query_params}'
 
     headers = {'X-User-Id': user.id}
+    # Forward the standard user-identity headers (X-OpenWebUI-User-Name/-Id/
+    # -Email/-Role) so terminal servers that scope by the real account — e.g.
+    # oh-my-gateway, whose per-user Claude workspaces are keyed off the email —
+    # can resolve the actual user, not just the internal UUID. Gated behind the
+    # existing ENABLE_FORWARD_USER_INFO_HEADERS flag and using the shared helper,
+    # consistent with the retrieval/tool paths; default behavior is unchanged.
+    if ENABLE_FORWARD_USER_INFO_HEADERS and user:
+        headers = include_user_info_headers(headers, user)
     # Forward per-session cwd tracking header
     session_id = request.headers.get('x-session-id')
     if session_id:
