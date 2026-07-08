@@ -847,8 +847,15 @@
 			}
 		});
 
-		const chatIdSubscribe = chatId.subscribe(() => {
-			// Clear tool explorer data when switching chats
+		let previousChatId = get(chatId);
+		const chatIdSubscribe = chatId.subscribe((newChatId) => {
+			const prev = previousChatId;
+			previousChatId = newChatId;
+			// Don't reset when the first chat is created from the landing page
+			// (empty -> new id): the user may have the right sidebar open (e.g.
+			// Files) and it shouldn't close just because the chat got an id.
+			if (!prev) return;
+			// Clear tool explorer data when switching between existing chats
 			toolExplorerData.set(null);
 			showToolExplorer.set(false);
 			showControls.set(false);
