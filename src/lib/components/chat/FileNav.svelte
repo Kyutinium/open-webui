@@ -981,14 +981,15 @@
 			const config = await getTerminalConfig(terminal.url, terminal.key);
 			terminalEnabled = config?.features?.terminal !== false;
 
+			// Always fetch the workspace root so paths can be shown relative to it
+			// ("./…"), even on a remount that restores a previously browsed path.
+			const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
+			const cwd = rawCwd ? normalizePath(rawCwd) : null;
+			if (cwd) rootPath = cwd.endsWith('/') ? cwd : cwd + '/';
+
 			if (chatId || savedPath === '/') {
-				// Fetch session-specific cwd from the server (or global default for new chats)
-				const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
-				const cwd = rawCwd ? normalizePath(rawCwd) : null;
-				if (cwd) {
-					savedPath = cwd.endsWith('/') ? cwd : cwd + '/';
-					rootPath = savedPath;
-				}
+				// Restore the session cwd as the browsed dir (root for new chats).
+				if (cwd) savedPath = rootPath;
 			}
 			loadDir(savedPath);
 		}
