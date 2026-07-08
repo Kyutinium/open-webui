@@ -3747,6 +3747,56 @@ async def streaming_chat_response_handler(response, ctx):
             def full_output():
                 return prior_output + output if prior_output else output
 
+            # With ENABLE_REALTIME_CHAT_SAVE off, mid-stream content only
+            # travels over the socket; the DB message stays empty until the
+            # final save, so a reload mid-stream shows nothing until the next
+            # delta arrives (which can be minutes into an agentic tool run).
+            # A periodic saver task persists the accumulated output every
+            # CHAT_STREAM_PARTIAL_SAVE_INTERVAL seconds when it changed,
+            # independent of delta timing — so burst tails and tool/reasoning
+            # phases are covered without the per-delta write load of
+            # ENABLE_REALTIME_CHAT_SAVE. DB errors are contained here and
+            # never disturb the live stream.
+            partial_saver_task = None
+            last_partial_saved_content = None
+
+            async def partial_message_saver():
+                nonlocal last_partial_saved_content
+                while True:
+                    await asyncio.sleep(CHAT_STREAM_PARTIAL_SAVE_INTERVAL)
+                    try:
+                        out = full_output()
+                        partial_content = serialize_output(out)
+                        if partial_content == last_partial_saved_content:
+                            continue
+                        await Chats.upsert_message_to_chat_by_id_and_message_id(
+                            metadata['chat_id'],
+                            metadata['message_id'],
+                            {
+                                'content': partial_content,
+                                'output': out,
+                            },
+                        )
+                        last_partial_saved_content = partial_content
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        log.debug(f'Partial message save failed: {e}')
+
+            async def stop_partial_saver():
+                # Stop BEFORE the final save so an in-flight partial upsert
+                # can't race the done=True write with stale content.
+                nonlocal partial_saver_task
+                if partial_saver_task is not None:
+                    partial_saver_task.cancel()
+                    try:
+                        await partial_saver_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                    partial_saver_task = None
+
             reasoning_tags_param = metadata.get('params', {}).get('reasoning_tags')
             DETECT_REASONING_TAGS = reasoning_tags_param is not False
             DETECT_CODE_INTERPRETER = metadata.get('features', {}).get('code_interpreter', False)
@@ -3759,6 +3809,14 @@ async def streaming_chat_response_handler(response, ctx):
                     reasoning_tags = DEFAULT_REASONING_TAGS
 
             try:
+                if (
+                    not ENABLE_REALTIME_CHAT_SAVE
+                    and CHAT_STREAM_PARTIAL_SAVE_INTERVAL > 0
+                    and metadata.get('chat_id')
+                    and metadata.get('message_id')
+                ):
+                    partial_saver_task = asyncio.create_task(partial_message_saver())
+
                 for event in events:
                     await event_emitter(
                         {
@@ -3791,7 +3849,6 @@ async def streaming_chat_response_handler(response, ctx):
                         int(metadata.get('params', {}).get('stream_delta_chunk_size') or 1),
                     )
                     last_delta_data = None
-                    last_partial_save_at = 0.0
 
                     async def flush_pending_delta_data(threshold: int = 0):
                         nonlocal delta_count
@@ -3806,32 +3863,6 @@ async def streaming_chat_response_handler(response, ctx):
                             )
                             delta_count = 0
                             last_delta_data = None
-
-                    async def save_partial_message_throttled():
-                        # With ENABLE_REALTIME_CHAT_SAVE off, mid-stream content
-                        # only travels over the socket; the DB message stays
-                        # empty until the final save. A reload mid-stream then
-                        # shows nothing until the next delta arrives (which can
-                        # be minutes into an agentic tool run). Persist the
-                        # accumulated content at most once per interval so a
-                        # reload picks it up from the DB, without the per-delta
-                        # write load of ENABLE_REALTIME_CHAT_SAVE.
-                        nonlocal last_partial_save_at
-
-                        if CHAT_STREAM_PARTIAL_SAVE_INTERVAL <= 0:
-                            return
-                        now = time.monotonic()
-                        if now - last_partial_save_at < CHAT_STREAM_PARTIAL_SAVE_INTERVAL:
-                            return
-                        last_partial_save_at = now
-                        await Chats.upsert_message_to_chat_by_id_and_message_id(
-                            metadata['chat_id'],
-                            metadata['message_id'],
-                            {
-                                'content': serialize_output(full_output()),
-                                'output': full_output(),
-                            },
-                        )
 
                     async for line in response.body_iterator:
                         line = line.decode('utf-8', 'replace') if isinstance(line, bytes) else line
@@ -4296,7 +4327,6 @@ async def streaming_chat_response_handler(response, ctx):
                                             data = {
                                                 'content': serialize_output(full_output()),
                                             }
-                                            await save_partial_message_throttled()
 
                                 if delta:
                                     delta_count += 1
@@ -4946,6 +4976,8 @@ async def streaming_chat_response_handler(response, ctx):
                     if item.get('status') == 'in_progress':
                         item['status'] = 'completed'
 
+                await stop_partial_saver()
+
                 title = await Chats.get_chat_title_by_id(metadata['chat_id'])
                 data = {
                     'done': True,
@@ -5013,6 +5045,7 @@ async def streaming_chat_response_handler(response, ctx):
             except asyncio.CancelledError:
                 log.warning('Task was cancelled!')
                 try:
+                    await asyncio.shield(stop_partial_saver())
                     await asyncio.shield(event_emitter({'type': 'chat:tasks:cancel'}))
 
                     if not ENABLE_REALTIME_CHAT_SAVE:
@@ -5039,6 +5072,11 @@ async def streaming_chat_response_handler(response, ctx):
                 except Exception:
                     pass
                 raise  # re-raise CancelledError for proper propagation
+            finally:
+                # Safety net for exits that bypass the explicit stops above
+                # (unexpected exceptions): the saver must never outlive the
+                # response handler.
+                await stop_partial_saver()
 
             if response.background is not None:
                 await response.background()
