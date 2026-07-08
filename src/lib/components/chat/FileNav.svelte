@@ -193,7 +193,6 @@
 	// environments block the native file picker, so this offers a drop target
 	// (with a browse fallback) instead of only opening the OS dialog.
 	let showUploadZone = false;
-	let uploadZoneInput: HTMLInputElement;
 	let creatingFolder = false;
 	let newFolderName = '';
 	let newFolderInput: HTMLInputElement;
@@ -669,18 +668,6 @@
 		await loadDir(currentPath);
 	};
 
-	const handleUploadFiles = async (files: File[]) => {
-		const terminal = selectedTerminal;
-		if (!files.length || !terminal) return;
-
-		uploading = true;
-		for (const file of files) {
-			await uploadToTerminal(terminal.url, terminal.key, currentPath, file, chatId ?? undefined);
-		}
-		uploading = false;
-		await loadDir(currentPath);
-	};
-
 	// ── Folder creation ──────────────────────────────────────────────────
 	const startNewFolder = async () => {
 		creatingFolder = true;
@@ -1138,25 +1125,6 @@
 					<div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-full px-3">
 						{toDisplayPath(currentPath)}
 					</div>
-					<button
-						class="mt-1 text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-						on:click={() => uploadZoneInput?.click()}
-					>
-						{$i18n.t('or browse files')}
-					</button>
-					<input
-						bind:this={uploadZoneInput}
-						type="file"
-						multiple
-						hidden
-						on:change={async () => {
-							if (!uploadZoneInput?.files?.length) return;
-							const files = Array.from(uploadZoneInput.files);
-							uploadZoneInput.value = '';
-							closeUploadZone();
-							await handleUploadFiles(files);
-						}}
-					/>
 				</div>
 			</div>
 		{/if}
