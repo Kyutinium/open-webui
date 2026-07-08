@@ -420,7 +420,8 @@
 	};
 
 	const openPathEditor = async () => {
-		pathValue = toDisplayPath(currentPath);
+		// Start from the open file's path when one is shown, otherwise the dir.
+		pathValue = toDisplayPath(selectedFile ?? currentPath);
 		pathEditing = true;
 		pathSuggestDir = null;
 		await tick();
