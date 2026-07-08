@@ -90,9 +90,14 @@
 		</button>
 	</Tooltip>
 
+	<!-- Click empty space (or the file name) to edit the path directly; crumb
+	     buttons stop propagation so they still navigate. -->
+	<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 	<div
 		bind:this={breadcrumbEl}
-		class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none"
+		class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none cursor-text"
+		title={$i18n.t('Click to edit path')}
+		on:click={onEditPath}
 	>
 		{#each breadcrumbs as crumb, i}
 			{#if i > 1}
@@ -106,7 +111,7 @@
 					{dragOverCrumb === i
 					? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-400 dark:ring-blue-500'
 					: ''}"
-				on:click={() => onNavigate(crumb.path)}
+				on:click|stopPropagation={() => onNavigate(crumb.path)}
 				on:dragover={(e) => {
 					if (!e.dataTransfer?.types.includes('application/x-terminal-file-move')) return;
 					e.preventDefault();
@@ -139,27 +144,6 @@
 			</span>
 		{/if}
 	</div>
-
-	<Tooltip content={$i18n.t('Go to path')}>
-		<button
-			class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
-			on:click={onEditPath}
-			aria-label={$i18n.t('Go to path')}
-		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 20 20"
-				fill="currentColor"
-				class="size-3.5"
-			>
-				<path
-					fill-rule="evenodd"
-					d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75Zm0 10.5a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75ZM3.53 8.97a.75.75 0 0 0-1.06 1.06L3.94 11.5l-1.47 1.47a.75.75 0 1 0 1.06 1.06l2-2a.75.75 0 0 0 0-1.06l-2-2ZM8.75 13.5a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Z"
-					clip-rule="evenodd"
-				/>
-			</svg>
-		</button>
-	</Tooltip>
 
 	<Tooltip content={$i18n.t('Refresh')}>
 		<button

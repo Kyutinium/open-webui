@@ -88,6 +88,10 @@
 
 	// ── Directory state ──────────────────────────────────────────────────
 	let currentPath = savedPath;
+	// Absolute workspace root (from the server cwd). Paths at/below it are shown
+	// as "./…" so the long absolute prefix stays hidden. Empty until discovered,
+	// in which case we fall back to showing absolute paths.
+	let rootPath = '';
 	let entries: FileEntry[] = [];
 	let loading = false;
 	let error: string | null = null;
@@ -254,6 +258,7 @@
 					const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
 					const cwd = rawCwd ? normalizePath(rawCwd) : null;
 					const dir = cwd ? (cwd.endsWith('/') ? cwd : cwd + '/') : '/';
+					if (cwd) rootPath = dir;
 					savedPath = dir;
 					loadDir(dir);
 				})();
@@ -276,7 +281,44 @@
 	/** Normalize Windows backslashes to forward slashes. */
 	const normalizePath = (p: string) => p.replace(/\\/g, '/');
 
+	// Ensure a directory path ends with a single trailing slash.
+	const withSlash = (p: string) => (p.endsWith('/') ? p : p + '/');
+
+	/** Absolute → "./…" for display. Falls back to absolute when the root is unknown. */
+	const toDisplayPath = (abs: string) => {
+		if (!rootPath) return abs;
+		const root = withSlash(rootPath);
+		if (abs === root || withSlash(abs) === root) return './';
+		if (abs.startsWith(root)) return './' + abs.slice(root.length);
+		return abs;
+	};
+
+	/** "./…" (or bare relative) → absolute. Absolute input is passed through. */
+	const toAbsolutePath = (display: string) => {
+		let s = (display ?? '').trim();
+		if (!rootPath) return s;
+		const root = withSlash(rootPath);
+		if (s === '' || s === '.' || s === './') return root;
+		if (s.startsWith('/')) return s.replace(/\/{2,}/g, '/');
+		if (s.startsWith('./')) s = s.slice(2);
+		return (root + s).replace(/\/{2,}/g, '/');
+	};
+
 	const buildBreadcrumbs = (path: string) => {
+		if (rootPath) {
+			const root = { label: '.', path: withSlash(rootPath) };
+			const rel = path.startsWith(withSlash(rootPath))
+				? path.slice(withSlash(rootPath).length)
+				: '';
+			return rel.split('/').filter(Boolean).reduce(
+				(acc, part) => {
+					const prev = acc[acc.length - 1];
+					acc.push({ label: part, path: `${prev.path}${part}/` });
+					return acc;
+				},
+				[root]
+			);
+		}
 		const parts = path.split('/').filter(Boolean);
 		const isDrive = /^[A-Za-z]:$/.test(parts[0] ?? '');
 		const root = isDrive ? { label: parts[0], path: `${parts[0]}/` } : { label: '/', path: '/' };
@@ -372,7 +414,7 @@
 	};
 
 	const openPathEditor = async () => {
-		pathValue = currentPath;
+		pathValue = toDisplayPath(currentPath);
 		pathEditing = true;
 		pathSuggestDir = null;
 		await tick();
@@ -394,7 +436,7 @@
 			pathSuggestions = [];
 			return;
 		}
-		const listDir = _dirPart(pathValue) || '/';
+		const listDir = toAbsolutePath(_dirPart(pathValue) || './');
 		if (pathSuggestDir !== listDir) {
 			pathSuggestDir = listDir;
 			try {
@@ -429,10 +471,10 @@
 		const target = pathValue.trim();
 		closePathEditor();
 		if (!target) return;
-		if (target.endsWith('/')) {
-			await loadDir(target);
+		if (target.endsWith('/') || target === '.' || target === './') {
+			await loadDir(withSlash(toAbsolutePath(target)));
 		} else {
-			await loadDir(_dirPart(target) || '/');
+			await loadDir(withSlash(toAbsolutePath(_dirPart(target) || './')));
 			await openEntry({ name: _namePart(target), type: 'file', size: 0 });
 		}
 	};
@@ -923,7 +965,10 @@
 				// Fetch session-specific cwd from the server (or global default for new chats)
 				const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
 				const cwd = rawCwd ? normalizePath(rawCwd) : null;
-				if (cwd) savedPath = cwd.endsWith('/') ? cwd : cwd + '/';
+				if (cwd) {
+					savedPath = cwd.endsWith('/') ? cwd : cwd + '/';
+					rootPath = savedPath;
+				}
 			}
 			loadDir(savedPath);
 		}
@@ -1020,7 +1065,7 @@
 						d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
 					/>
 				</svg>
-				<span class="text-xs text-gray-400 dark:text-gray-500">{currentPath}</span>
+				<span class="text-xs text-gray-400 dark:text-gray-500">{toDisplayPath(currentPath)}</span>
 			</div>
 		{/if}
 
