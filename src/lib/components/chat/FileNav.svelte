@@ -1079,7 +1079,7 @@
 						spellcheck="false"
 						autocomplete="off"
 						placeholder={$i18n.t('Type a path…')}
-						class="w-full text-xs px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 outline-none focus:border-gray-300 dark:focus:border-gray-600"
+						class="w-full text-xs px-2 py-1 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 shadow-sm outline-none transition focus:border-blue-400 dark:focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
 						on:input={updatePathSuggestions}
 						on:keydown={onPathKeydown}
 						on:blur={() => setTimeout(closePathEditor, 150)}
