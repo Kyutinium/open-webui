@@ -99,11 +99,11 @@
 		on:click={onEditPath}
 	>
 		{#each breadcrumbs as crumb, i}
-			{#if i > 1}
-				<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none mx-0.5">/</span>
+			{#if i > 0 && !breadcrumbs[i - 1].label.endsWith('/')}
+				<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none">/</span>
 			{/if}
 			<button
-				class="text-xs shrink-0 px-1 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition
+				class="text-xs shrink-0 px-0.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition
 					{!selectedFile && i === breadcrumbs.length - 1
 					? 'text-gray-700 dark:text-gray-300'
 					: 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400'}
@@ -137,8 +137,8 @@
 			</button>
 		{/each}
 		{#if selectedFile}
-			<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none mx-0.5">/</span>
-			<span class="text-xs shrink-0 px-1.5 py-0.5 text-gray-700 dark:text-gray-300">
+			<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none">/</span>
+			<span class="text-xs shrink-0 px-0.5 py-0.5 text-gray-700 dark:text-gray-300">
 				{selectedFile.split('/').pop()}
 			</span>
 		{/if}
