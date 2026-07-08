@@ -974,6 +974,24 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             if resp_id and chat_id and not task:
                                 self._response_ids[chat_id] = resp_id
                                 log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
+                            # NOTE on AskUserQuestion continuity: when this turn
+                            # ends with status=requires_action (a card), the
+                            # user's answer is relayed to the gateway *directly*
+                            # by ``/api/v1/auq/answer`` — it never flows back
+                            # through this pipe — so the pipe cannot observe the
+                            # resumed response's id. ``self._response_ids`` is
+                            # therefore left pointing at the requires_action
+                            # response. The first normal turn after an answer
+                            # then sends a now-stale previous_response_id and
+                            # gets a 409, which ``_open_responses_stream``
+                            # transparently recovers by adopting the latest id
+                            # from the error body. Cost: one extra request on
+                            # that first post-answer turn only; no context loss.
+                            # (A tighter fix would require sharing the resumed
+                            # id across the pipe/relay process boundary — not
+                            # possible while this runs as a standalone
+                            # Pipelines-container manifold — so the self-heal is
+                            # the deployment-agnostic behaviour.)
 
                             # Detect AskUserQuestion (requires_action). The
                             # gateway/SDK surfaces permission prompts and

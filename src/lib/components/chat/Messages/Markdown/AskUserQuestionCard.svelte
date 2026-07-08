@@ -25,6 +25,35 @@
 
 	const isMetaOption = (label: string) => META_OPTION_PATTERN.test(label.trim());
 
+	// Persist which call_ids have already been answered so a card that is
+	// re-rendered after a page reload (its <details> block is saved in the
+	// message content) does not re-arm. Re-submitting a consumed call_id would
+	// hit the gateway with a stale function_call_output and fail with a 400.
+	const AUQ_ANSWERED_KEY = 'auq:answered';
+	const loadAnswered = (): string[] => {
+		try {
+			const raw = localStorage.getItem(AUQ_ANSWERED_KEY);
+			const parsed = raw ? JSON.parse(raw) : [];
+			return Array.isArray(parsed) ? parsed : [];
+		} catch {
+			return [];
+		}
+	};
+	const isAnswered = (id: string): boolean => !!id && loadAnswered().includes(id);
+	const markAnswered = (id: string) => {
+		if (!id) return;
+		try {
+			const list = loadAnswered();
+			if (list.includes(id)) return;
+			list.push(id);
+			// Cap the history so the key can't grow unbounded.
+			while (list.length > 200) list.shift();
+			localStorage.setItem(AUQ_ANSWERED_KEY, JSON.stringify(list));
+		} catch {
+			/* localStorage unavailable — in-session `submitted` still guards */
+		}
+	};
+
 	type AnswerMap = Map<number, string>;
 	type SelectionMap = Map<number, Set<string>>;
 	type TextMap = Map<number, string>;
@@ -39,7 +68,9 @@
 	let answers: AnswerMap = new Map();
 	let multiSelections: SelectionMap = new Map();
 	let customTexts: TextMap = new Map();
-	let submitted = false;
+	// Start "answered" if this call_id was already submitted in a prior session
+	// (card restored from saved message content after a reload).
+	let submitted = isAnswered(data?.callId ?? '');
 	let focusedOption = 0; // 0..optionCount-1 for options, optionCount for input
 	let containerRef: HTMLDivElement | null = null;
 	let inputRef: HTMLInputElement | null = null;
@@ -132,6 +163,8 @@
 	const submitAll = async () => {
 		if (!allAnswered || isDisabled) return;
 		submitted = true;
+		// Remember this call_id so a reloaded copy of the card stays disabled.
+		markAnswered(data?.callId ?? '');
 
 		let answerText: string;
 		if (questions.length === 1) {
