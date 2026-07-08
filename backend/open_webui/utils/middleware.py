@@ -135,6 +135,7 @@ from open_webui.env import (
     ENABLE_QUERIES_CACHE,
     RAG_SYSTEM_CONTEXT,
     ENABLE_FORWARD_USER_INFO_HEADERS,
+    ENABLE_TERMINAL_TOOLS,
     FORWARD_SESSION_INFO_HEADER_CHAT_ID,
     FORWARD_SESSION_INFO_HEADER_MESSAGE_ID,
     ENABLE_RESPONSES_API_STATEFUL,
@@ -2696,7 +2697,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         # Resolve terminal tools if terminal_id is set (outside tool_ids check
         # so system terminals work even when no other tools are selected)
         terminal_capability = (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('terminal', True)
-        if terminal_id and terminal_capability:
+        # ENABLE_TERMINAL_TOOLS=False keeps terminal connections as pure file
+        # browsers (FileNav calls /files/* directly) without exposing them as LLM
+        # tools — avoids building tool callables that crash chat serialization.
+        if terminal_id and terminal_capability and ENABLE_TERMINAL_TOOLS:
             try:
                 terminal_result = await get_terminal_tools(
                     request,

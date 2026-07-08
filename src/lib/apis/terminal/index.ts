@@ -64,21 +64,26 @@ export const listFiles = async (
 	apiKey: string,
 	path: string = '/',
 	sessionId?: string
-): Promise<FileEntry[] | null> => {
+): Promise<FileEntry[]> => {
 	// The endpoint uses `directory` as the query param name
 	const url = `${baseUrl.replace(/\/$/, '')}/files/list?directory=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers })
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			console.error('open-terminal listFiles error:', err);
-			return null;
-		});
-	return res?.entries ?? null;
+	// Throw (rather than swallow to null) so callers can surface the server's
+	// message — e.g. a 403 when navigating above the workspace root.
+	const res = await fetch(url, { headers }).catch(() => null);
+	if (!res) throw new Error('Failed to reach the terminal server.');
+	if (!res.ok) {
+		let detail = '';
+		try {
+			detail = (await res.json())?.detail ?? '';
+		} catch {
+			// non-JSON body
+		}
+		throw new Error(detail || `Failed to load directory (${res.status}).`);
+	}
+	const json = await res.json().catch(() => null);
+	return json?.entries ?? [];
 };
 
 export const readFile = async (
