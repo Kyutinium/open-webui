@@ -879,8 +879,17 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             if mcp_tools and isinstance(mcp_tools, list):
                 # "Task" lets the orchestrator spawn subagents — required for
                 # the subagent grouping UI to have anything to group.
+                # "AskUserQuestion" is listed defensively. allowed_tools is a
+                # permission allow-list, not an availability filter, and the
+                # gateway intercepts AskUserQuestion with a PreToolUse hook that
+                # runs before the allow/deny rules — so under the default
+                # permission mode the card flow already fires even without this
+                # entry. Listing it follows Anthropic's guidance and keeps it
+                # working if the gateway ever runs under a restrictive mode
+                # (e.g. dontAsk), where an unlisted tool would be denied.
                 base_tools = [
-                    "Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill", "Task",
+                    "Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill",
+                    "Task", "AskUserQuestion",
                 ]
                 payload["allowed_tools"] = base_tools + mcp_tools
                 log.info("[PIPE] allowed_tools (new session): %s", payload["allowed_tools"])
