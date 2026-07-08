@@ -353,6 +353,114 @@
 		});
 	};
 
+	// ── Path editor: type-to-navigate with VSCode-style filtered suggestions ─
+	let pathEditing = false;
+	let pathValue = '';
+	let pathInputEl: HTMLInputElement;
+	let pathSuggestions: FileEntry[] = [];
+	let pathSuggestDir: string | null = null; // dir currently listed for suggestions
+	let pathDirEntries: FileEntry[] = []; // raw listing of the typed dir part
+	let pathActiveIndex = -1;
+
+	const _dirPart = (p: string) => {
+		const i = p.lastIndexOf('/');
+		return i >= 0 ? p.slice(0, i + 1) : '';
+	};
+	const _namePart = (p: string) => {
+		const i = p.lastIndexOf('/');
+		return i >= 0 ? p.slice(i + 1) : p;
+	};
+
+	const openPathEditor = async () => {
+		pathValue = currentPath;
+		pathEditing = true;
+		pathSuggestDir = null;
+		await tick();
+		pathInputEl?.focus();
+		pathInputEl?.select();
+		updatePathSuggestions();
+	};
+	const closePathEditor = () => {
+		pathEditing = false;
+		pathSuggestions = [];
+		pathActiveIndex = -1;
+	};
+
+	// List the "directory part" of the typed path and filter its entries by the
+	// trailing "name part" — so typing filters live, and typing "/" dives in.
+	const updatePathSuggestions = async () => {
+		const terminal = getTerminal();
+		if (!terminal) {
+			pathSuggestions = [];
+			return;
+		}
+		const listDir = _dirPart(pathValue) || '/';
+		if (pathSuggestDir !== listDir) {
+			pathSuggestDir = listDir;
+			try {
+				pathDirEntries = await listFiles(terminal.url, terminal.key, listDir, chatId ?? undefined);
+			} catch {
+				pathDirEntries = [];
+			}
+		}
+		const q = _namePart(pathValue).toLowerCase();
+		pathSuggestions = pathDirEntries
+			.filter((e) => e.name.toLowerCase().includes(q))
+			.sort((a, b) =>
+				a.type !== b.type ? (a.type === 'directory' ? -1 : 1) : a.name.localeCompare(b.name)
+			)
+			.slice(0, 100);
+		pathActiveIndex = pathSuggestions.length ? 0 : -1;
+	};
+
+	const applyPathSuggestion = (entry: FileEntry) => {
+		const dir = _dirPart(pathValue);
+		if (entry.type === 'directory') {
+			pathValue = `${dir}${entry.name}/`;
+			pathInputEl?.focus();
+			updatePathSuggestions();
+		} else {
+			pathValue = `${dir}${entry.name}`;
+			submitPathEditor();
+		}
+	};
+
+	const submitPathEditor = async () => {
+		const target = pathValue.trim();
+		closePathEditor();
+		if (!target) return;
+		if (target.endsWith('/')) {
+			await loadDir(target);
+		} else {
+			await loadDir(_dirPart(target) || '/');
+			await openEntry({ name: _namePart(target), type: 'file', size: 0 });
+		}
+	};
+
+	const onPathKeydown = (e: KeyboardEvent) => {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			closePathEditor();
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			if (pathSuggestions.length) pathActiveIndex = (pathActiveIndex + 1) % pathSuggestions.length;
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (pathSuggestions.length)
+				pathActiveIndex = (pathActiveIndex - 1 + pathSuggestions.length) % pathSuggestions.length;
+		} else if (e.key === 'Tab') {
+			e.preventDefault();
+			if (pathActiveIndex >= 0) applyPathSuggestion(pathSuggestions[pathActiveIndex]);
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			if (pathActiveIndex >= 0 && pathSuggestions[pathActiveIndex]?.type === 'directory') {
+				applyPathSuggestion(pathSuggestions[pathActiveIndex]);
+			} else {
+				submitPathEditor();
+			}
+		}
+	};
+
 	const openEntry = async (entry: FileEntry) => {
 		if (entry.type === 'directory') {
 			await loadDir(`${currentPath}${entry.name}/`);
@@ -917,6 +1025,49 @@
 		{/if}
 
 		{#if previewPort === null}
+			{#if pathEditing}
+				<div class="relative px-2 pb-1.5 shrink-0">
+					<input
+						bind:this={pathInputEl}
+						bind:value={pathValue}
+						type="text"
+						spellcheck="false"
+						autocomplete="off"
+						placeholder={$i18n.t('Type a path…')}
+						class="w-full text-xs px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 outline-none focus:border-gray-300 dark:focus:border-gray-600"
+						on:input={updatePathSuggestions}
+						on:keydown={onPathKeydown}
+						on:blur={() => setTimeout(closePathEditor, 150)}
+					/>
+					{#if pathSuggestions.length}
+						<div
+							class="absolute left-2 right-2 top-full mt-1 z-50 max-h-64 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg py-1"
+						>
+							{#each pathSuggestions as s, i}
+								<button
+									type="button"
+									class="w-full flex items-center gap-2 px-2 py-1 text-xs text-left {i ===
+									pathActiveIndex
+										? 'bg-gray-100 dark:bg-gray-800'
+										: 'hover:bg-gray-50 dark:hover:bg-gray-850'}"
+									on:mousedown|preventDefault={() => applyPathSuggestion(s)}
+									on:mouseenter={() => (pathActiveIndex = i)}
+								>
+									{#if s.type === 'directory'}
+										<Folder className="size-3.5 shrink-0 text-blue-400 dark:text-blue-300" />
+									{:else}
+										<Document className="size-3.5 shrink-0 text-gray-400 dark:text-gray-500" />
+									{/if}
+									<span class="truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+									{#if s.type === 'directory'}
+										<span class="ml-auto text-gray-300 dark:text-gray-600 select-none">/</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{:else}
 			<FileNavToolbar
 				breadcrumbs={buildBreadcrumbs(currentPath)}
 				{selectedFile}
@@ -939,6 +1090,7 @@
 				onUploadFiles={handleUploadFiles}
 				onDownloadDir={() => downloadFile(currentPath)}
 				onMove={handleMove}
+				onEditPath={openPathEditor}
 			>
 				{#if fileImageUrl !== null || (fileOfficeSlides !== null && fileOfficeSlides.length > 0)}
 					<Tooltip content={$i18n.t('Reset view')}>
@@ -1215,6 +1367,7 @@
 					onSelectAll={selectAll}
 					onClear={clearSelection}
 				/>
+			{/if}
 			{/if}
 		{/if}
 

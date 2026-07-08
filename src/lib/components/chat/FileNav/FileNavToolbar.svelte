@@ -20,6 +20,7 @@
 	export let onUploadFiles: (files: File[]) => void = () => {};
 	export let onDownloadDir: () => void = () => {};
 	export let onMove: (source: string, destFolder: string) => void = () => {};
+	export let onEditPath: () => void = () => {};
 
 	// Back / forward navigation
 	export let canGoBack = false;
@@ -138,6 +139,27 @@
 			</span>
 		{/if}
 	</div>
+
+	<Tooltip content={$i18n.t('Go to path')}>
+		<button
+			class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+			on:click={onEditPath}
+			aria-label={$i18n.t('Go to path')}
+		>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				viewBox="0 0 20 20"
+				fill="currentColor"
+				class="size-3.5"
+			>
+				<path
+					fill-rule="evenodd"
+					d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75Zm0 10.5a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75ZM3.53 8.97a.75.75 0 0 0-1.06 1.06L3.94 11.5l-1.47 1.47a.75.75 0 1 0 1.06 1.06l2-2a.75.75 0 0 0 0-1.06l-2-2ZM8.75 13.5a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Z"
+					clip-rule="evenodd"
+				/>
+			</svg>
+		</button>
+	</Tooltip>
 
 	<Tooltip content={$i18n.t('Refresh')}>
 		<button
