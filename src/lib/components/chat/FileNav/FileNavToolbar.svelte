@@ -17,7 +17,7 @@
 	export let onRefresh: () => void = () => {};
 	export let onNewFolder: () => void = () => {};
 	export let onNewFile: () => void = () => {};
-	export let onUploadFiles: (files: File[]) => void = () => {};
+	export let onRequestUpload: () => void = () => {};
 	export let onDownloadDir: () => void = () => {};
 	export let onMove: (source: string, destFolder: string) => void = () => {};
 	export let onEditPath: () => void = () => {};
@@ -30,7 +30,6 @@
 
 	let dragOverCrumb: number | null = null;
 
-	let uploadInput: HTMLInputElement;
 	let breadcrumbEl: HTMLDivElement;
 
 	// Scroll breadcrumb to the end after every DOM update
@@ -209,7 +208,7 @@
 		<Tooltip content={$i18n.t('Upload')}>
 			<button
 				class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
-				on:click={() => uploadInput?.click()}
+				on:click={onRequestUpload}
 				aria-label={$i18n.t('Upload')}
 			>
 				<svg
@@ -228,17 +227,6 @@
 				</svg>
 			</button>
 		</Tooltip>
-		<input
-			bind:this={uploadInput}
-			type="file"
-			multiple
-			hidden
-			on:change={async () => {
-				if (!uploadInput?.files?.length) return;
-				onUploadFiles(Array.from(uploadInput.files));
-				uploadInput.value = '';
-			}}
-		/>
 	{:else}
 		<slot />
 	{/if}

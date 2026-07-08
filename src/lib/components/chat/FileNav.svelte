@@ -189,6 +189,11 @@
 	// ── Upload / folder creation ─────────────────────────────────────────
 	let isDragOver = false;
 	let uploading = false;
+	// Drag-and-drop upload zone, opened from the toolbar's upload button. Some
+	// environments block the native file picker, so this offers a drop target
+	// (with a browse fallback) instead of only opening the OS dialog.
+	let showUploadZone = false;
+	let uploadZoneInput: HTMLInputElement;
 	let creatingFolder = false;
 	let newFolderName = '';
 	let newFolderInput: HTMLInputElement;
@@ -630,17 +635,32 @@
 		isDragOver = true;
 	};
 
+	const openUploadZone = () => {
+		showUploadZone = true;
+	};
+	const closeUploadZone = () => {
+		showUploadZone = false;
+		isDragOver = false;
+	};
+
 	const handleDrop = async (e: DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		isDragOver = false;
 
 		const terminal = selectedTerminal;
-		if (selectedFile || !terminal) return;
+		if (selectedFile || !terminal) {
+			showUploadZone = false;
+			return;
+		}
 
 		const droppedFiles = Array.from(e.dataTransfer?.files ?? []);
-		if (!droppedFiles.length) return;
+		if (!droppedFiles.length) {
+			showUploadZone = false;
+			return;
+		}
 
+		showUploadZone = false;
 		uploading = true;
 		for (const file of droppedFiles) {
 			await uploadToTerminal(terminal.url, terminal.key, currentPath, file, chatId ?? undefined);
@@ -977,6 +997,7 @@
 
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') shiftKey = true;
+			if (e.key === 'Escape' && showUploadZone) closeUploadZone();
 		};
 		const onKeyUp = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') shiftKey = false;
@@ -1047,7 +1068,7 @@
 		role="region"
 		aria-label={$i18n.t('File browser')}
 	>
-		{#if isDragOver}
+		{#if isDragOver && !showUploadZone}
 			<div
 				class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 dark:bg-gray-850/80 backdrop-blur-sm pointer-events-none gap-1.5"
 			>
@@ -1066,6 +1087,76 @@
 					/>
 				</svg>
 				<span class="text-xs text-gray-400 dark:text-gray-500">{toDisplayPath(currentPath)}</span>
+			</div>
+		{/if}
+
+		{#if showUploadZone}
+			<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+			<div
+				class="absolute inset-0 z-20 flex items-center justify-center p-3 bg-white/90 dark:bg-gray-850/90 backdrop-blur-sm"
+				on:click|self={closeUploadZone}
+			>
+				<div
+					class="relative w-full h-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed transition {isDragOver
+						? 'border-blue-400 dark:border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
+						: 'border-gray-300 dark:border-gray-600'}"
+				>
+					<button
+						class="absolute top-2 right-2 p-1 rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+						on:click={closeUploadZone}
+						aria-label={$i18n.t('Close')}
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="size-4"
+						>
+							<path
+								d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"
+							/>
+						</svg>
+					</button>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						class="size-6 text-gray-400 dark:text-gray-500"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+						/>
+					</svg>
+					<div class="text-sm text-gray-600 dark:text-gray-300 text-center px-3">
+						{$i18n.t('Drag and drop files here to upload')}
+					</div>
+					<div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-full px-3">
+						{toDisplayPath(currentPath)}
+					</div>
+					<button
+						class="mt-1 text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+						on:click={() => uploadZoneInput?.click()}
+					>
+						{$i18n.t('or browse files')}
+					</button>
+					<input
+						bind:this={uploadZoneInput}
+						type="file"
+						multiple
+						hidden
+						on:change={async () => {
+							if (!uploadZoneInput?.files?.length) return;
+							const files = Array.from(uploadZoneInput.files);
+							uploadZoneInput.value = '';
+							closeUploadZone();
+							await handleUploadFiles(files);
+						}}
+					/>
+				</div>
 			</div>
 		{/if}
 
@@ -1132,7 +1223,7 @@
 				}}
 				onNewFolder={startNewFolder}
 				onNewFile={startNewFile}
-				onUploadFiles={handleUploadFiles}
+				onRequestUpload={openUploadZone}
 				onDownloadDir={() => downloadFile(currentPath)}
 				onMove={handleMove}
 				onEditPath={openPathEditor}
