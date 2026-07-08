@@ -132,6 +132,7 @@ from open_webui.env import (
     CHAT_RESPONSE_MAX_TOOL_CALL_RETRIES,
     BYPASS_MODEL_ACCESS_CONTROL,
     ENABLE_REALTIME_CHAT_SAVE,
+    CHAT_STREAM_PARTIAL_SAVE_INTERVAL,
     ENABLE_QUERIES_CACHE,
     RAG_SYSTEM_CONTEXT,
     ENABLE_FORWARD_USER_INFO_HEADERS,
@@ -3790,6 +3791,7 @@ async def streaming_chat_response_handler(response, ctx):
                         int(metadata.get('params', {}).get('stream_delta_chunk_size') or 1),
                     )
                     last_delta_data = None
+                    last_partial_save_at = 0.0
 
                     async def flush_pending_delta_data(threshold: int = 0):
                         nonlocal delta_count
@@ -3804,6 +3806,32 @@ async def streaming_chat_response_handler(response, ctx):
                             )
                             delta_count = 0
                             last_delta_data = None
+
+                    async def save_partial_message_throttled():
+                        # With ENABLE_REALTIME_CHAT_SAVE off, mid-stream content
+                        # only travels over the socket; the DB message stays
+                        # empty until the final save. A reload mid-stream then
+                        # shows nothing until the next delta arrives (which can
+                        # be minutes into an agentic tool run). Persist the
+                        # accumulated content at most once per interval so a
+                        # reload picks it up from the DB, without the per-delta
+                        # write load of ENABLE_REALTIME_CHAT_SAVE.
+                        nonlocal last_partial_save_at
+
+                        if CHAT_STREAM_PARTIAL_SAVE_INTERVAL <= 0:
+                            return
+                        now = time.monotonic()
+                        if now - last_partial_save_at < CHAT_STREAM_PARTIAL_SAVE_INTERVAL:
+                            return
+                        last_partial_save_at = now
+                        await Chats.upsert_message_to_chat_by_id_and_message_id(
+                            metadata['chat_id'],
+                            metadata['message_id'],
+                            {
+                                'content': serialize_output(full_output()),
+                                'output': full_output(),
+                            },
+                        )
 
                     async for line in response.body_iterator:
                         line = line.decode('utf-8', 'replace') if isinstance(line, bytes) else line
@@ -4268,6 +4296,7 @@ async def streaming_chat_response_handler(response, ctx):
                                             data = {
                                                 'content': serialize_output(full_output()),
                                             }
+                                            await save_partial_message_throttled()
 
                                 if delta:
                                     delta_count += 1
