@@ -1,6 +1,12 @@
 <script context="module">
 	// Persists across mount/unmount cycles (module-level, not per-instance)
 	let savedPath = '/';
+	// Absolute workspace root, used to show paths relative to it as "./…". Kept
+	// module-level so it survives remounts and transient cwd-fetch failures (it
+	// would otherwise reset to '' and the UI would fall back to absolute paths).
+	// Display still reacts to changes because the template reads it via the
+	// (instance-reactive) currentPath, which always updates at/after rootPath.
+	let rootPath = '';
 </script>
 
 <script lang="ts">
@@ -88,10 +94,6 @@
 
 	// ── Directory state ──────────────────────────────────────────────────
 	let currentPath = savedPath;
-	// Absolute workspace root (from the server cwd). Paths at/below it are shown
-	// as "./…" so the long absolute prefix stays hidden. Empty until discovered,
-	// in which case we fall back to showing absolute paths.
-	let rootPath = '';
 	let entries: FileEntry[] = [];
 	let loading = false;
 	let error: string | null = null;
