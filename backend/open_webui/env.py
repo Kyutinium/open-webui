@@ -471,6 +471,17 @@ RESET_CONFIG_ON_START = os.environ.get('RESET_CONFIG_ON_START', 'False').lower()
 
 ENABLE_REALTIME_CHAT_SAVE = os.environ.get('ENABLE_REALTIME_CHAT_SAVE', 'False').lower() == 'true'
 
+# When ENABLE_REALTIME_CHAT_SAVE is off, persist the in-progress assistant
+# message to the DB once per this many seconds while it changes, so a page
+# reload mid-stream shows the content streamed so far instead of an empty
+# message until the next token arrives. Values <= 0 disable partial saves.
+try:
+    CHAT_STREAM_PARTIAL_SAVE_INTERVAL = float(
+        os.environ.get('CHAT_STREAM_PARTIAL_SAVE_INTERVAL', '2')
+    )
+except Exception:
+    CHAT_STREAM_PARTIAL_SAVE_INTERVAL = 2.0
+
 ENABLE_QUERIES_CACHE = os.environ.get('ENABLE_QUERIES_CACHE', 'False').lower() == 'true'
 
 RAG_SYSTEM_CONTEXT = os.environ.get('RAG_SYSTEM_CONTEXT', 'False').lower() == 'true'
