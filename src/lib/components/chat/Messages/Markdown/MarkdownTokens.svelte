@@ -67,7 +67,9 @@
 			}
 			toolExplorerData.set(seeded);
 		}
-		showToolExplorer.set(true);
+		// Populate only — do NOT auto-open the Tool Results tab on render, which
+		// stole focus from the tab the user was viewing. The explicit
+		// "View searched documents" button still opens it on click.
 	}
 
 	export let id: string;

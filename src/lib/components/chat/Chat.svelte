@@ -657,7 +657,10 @@
 							}
 						}
 						toolExplorerData.set(next);
-						showToolExplorer.set(true);
+						// Populate the Tool Results tab but DON'T auto-switch to it — that
+						// stole focus from the Files/Controls tab mid-response. The tab
+						// appears (data is set) and the user opens it when they want; the
+						// per-message panel-open below still surfaces it once.
 						if (!message._controlsOpened) {
 							message._controlsOpened = true;
 							showControls.set(true);
