@@ -73,8 +73,6 @@
 		savedTab = activeTab;
 	}
 
-	$: hasMessages = history?.messages && Object.keys(history.messages).length > 0;
-
 	$: showControlsTab = $user?.role === 'admin' || ($user?.permissions?.chat?.controls ?? true);
 	$: showFilesTab =
 		($selectedTerminalId &&
@@ -82,7 +80,9 @@
 				$user?.role === 'admin' ||
 				($user?.permissions?.features?.direct_tool_servers ?? true))) ||
 		(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter');
-	$: showOverviewTab = hasMessages;
+	// Overview tab removed from the panel (not used); keep the flag false so the
+	// tab button, auto-select, and content branch below all no-op.
+	$: showOverviewTab = false;
 	$: showToolResultsTab = $toolExplorerData && Object.keys($toolExplorerData).length > 0;
 
 	// When tool explorer wants to open, switch to the tool_results tab
