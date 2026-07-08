@@ -17,9 +17,10 @@
 	export let onRefresh: () => void = () => {};
 	export let onNewFolder: () => void = () => {};
 	export let onNewFile: () => void = () => {};
-	export let onUploadFiles: (files: File[]) => void = () => {};
+	export let onRequestUpload: () => void = () => {};
 	export let onDownloadDir: () => void = () => {};
 	export let onMove: (source: string, destFolder: string) => void = () => {};
+	export let onEditPath: () => void = () => {};
 
 	// Back / forward navigation
 	export let canGoBack = false;
@@ -29,7 +30,6 @@
 
 	let dragOverCrumb: number | null = null;
 
-	let uploadInput: HTMLInputElement;
 	let breadcrumbEl: HTMLDivElement;
 
 	// Scroll breadcrumb to the end after every DOM update
@@ -89,23 +89,28 @@
 		</button>
 	</Tooltip>
 
+	<!-- Click empty space (or the file name) to edit the path directly; crumb
+	     buttons stop propagation so they still navigate. -->
+	<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 	<div
 		bind:this={breadcrumbEl}
-		class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none"
+		class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none cursor-text rounded-lg px-1.5 py-0.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 transition"
+		title={$i18n.t('Click to edit path')}
+		on:click={onEditPath}
 	>
 		{#each breadcrumbs as crumb, i}
-			{#if i > 1}
-				<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none mx-0.5">/</span>
+			{#if i > 0 && !breadcrumbs[i - 1].label.endsWith('/')}
+				<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none">/</span>
 			{/if}
 			<button
-				class="text-xs shrink-0 px-1 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition
+				class="text-xs shrink-0 px-0.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition
 					{!selectedFile && i === breadcrumbs.length - 1
 					? 'text-gray-700 dark:text-gray-300'
 					: 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400'}
 					{dragOverCrumb === i
 					? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-400 dark:ring-blue-500'
 					: ''}"
-				on:click={() => onNavigate(crumb.path)}
+				on:click|stopPropagation={() => onNavigate(crumb.path)}
 				on:dragover={(e) => {
 					if (!e.dataTransfer?.types.includes('application/x-terminal-file-move')) return;
 					e.preventDefault();
@@ -132,8 +137,8 @@
 			</button>
 		{/each}
 		{#if selectedFile}
-			<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none mx-0.5">/</span>
-			<span class="text-xs shrink-0 px-1.5 py-0.5 text-gray-700 dark:text-gray-300">
+			<span class="text-gray-300 dark:text-gray-600 text-xs shrink-0 select-none">/</span>
+			<span class="text-xs shrink-0 px-0.5 py-0.5 text-gray-700 dark:text-gray-300">
 				{selectedFile.split('/').pop()}
 			</span>
 		{/if}
@@ -203,7 +208,7 @@
 		<Tooltip content={$i18n.t('Upload')}>
 			<button
 				class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
-				on:click={() => uploadInput?.click()}
+				on:click={onRequestUpload}
 				aria-label={$i18n.t('Upload')}
 			>
 				<svg
@@ -222,17 +227,6 @@
 				</svg>
 			</button>
 		</Tooltip>
-		<input
-			bind:this={uploadInput}
-			type="file"
-			multiple
-			hidden
-			on:change={async () => {
-				if (!uploadInput?.files?.length) return;
-				onUploadFiles(Array.from(uploadInput.files));
-				uploadInput.value = '';
-			}}
-		/>
 	{:else}
 		<slot />
 	{/if}

@@ -1,5 +1,5 @@
 <script context="module" lang="ts">
-	let savedTab: 'controls' | 'files' | 'overview' | 'tool_results' = 'controls';
+	let savedTab: 'controls' | 'files' | 'overview' | 'tool_results' = 'files';
 </script>
 
 <script lang="ts">
@@ -73,7 +73,10 @@
 		savedTab = activeTab;
 	}
 
-	$: showControlsTab = $user?.role === 'admin' || ($user?.permissions?.chat?.controls ?? true);
+	// Controls tab hidden — model/params are managed by the gateway. Flip back to
+	// the permission check below to restore it.
+	$: showControlsTab = false;
+	// $: showControlsTab = $user?.role === 'admin' || ($user?.permissions?.chat?.controls ?? true);
 	$: showFilesTab =
 		($selectedTerminalId &&
 			(($terminalServers ?? []).some((t) => t.id && t.id === $selectedTerminalId) ||

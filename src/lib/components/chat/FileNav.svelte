@@ -1,6 +1,12 @@
 <script context="module">
 	// Persists across mount/unmount cycles (module-level, not per-instance)
 	let savedPath = '/';
+	// Absolute workspace root, used to show paths relative to it as "./…". Kept
+	// module-level so it survives remounts and transient cwd-fetch failures (it
+	// would otherwise reset to '' and the UI would fall back to absolute paths).
+	// Display still reacts to changes because the template reads it via the
+	// (instance-reactive) currentPath, which always updates at/after rootPath.
+	let rootPath = '';
 </script>
 
 <script lang="ts">
@@ -185,6 +191,10 @@
 	// ── Upload / folder creation ─────────────────────────────────────────
 	let isDragOver = false;
 	let uploading = false;
+	// Drag-and-drop upload zone, opened from the toolbar's upload button. Some
+	// environments block the native file picker, so this offers a drop target
+	// (with a browse fallback) instead of only opening the OS dialog.
+	let showUploadZone = false;
 	let creatingFolder = false;
 	let newFolderName = '';
 	let newFolderInput: HTMLInputElement;
@@ -254,6 +264,7 @@
 					const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
 					const cwd = rawCwd ? normalizePath(rawCwd) : null;
 					const dir = cwd ? (cwd.endsWith('/') ? cwd : cwd + '/') : '/';
+					if (cwd) rootPath = dir;
 					savedPath = dir;
 					loadDir(dir);
 				})();
@@ -276,7 +287,44 @@
 	/** Normalize Windows backslashes to forward slashes. */
 	const normalizePath = (p: string) => p.replace(/\\/g, '/');
 
+	// Ensure a directory path ends with a single trailing slash.
+	const withSlash = (p: string) => (p.endsWith('/') ? p : p + '/');
+
+	/** Absolute → "./…" for display. Falls back to absolute when the root is unknown. */
+	const toDisplayPath = (abs: string) => {
+		if (!rootPath) return abs;
+		const root = withSlash(rootPath);
+		if (abs === root || withSlash(abs) === root) return './';
+		if (abs.startsWith(root)) return './' + abs.slice(root.length);
+		return abs;
+	};
+
+	/** "./…" (or bare relative) → absolute. Absolute input is passed through. */
+	const toAbsolutePath = (display: string) => {
+		let s = (display ?? '').trim();
+		if (!rootPath) return s;
+		const root = withSlash(rootPath);
+		if (s === '' || s === '.' || s === './') return root;
+		if (s.startsWith('/')) return s.replace(/\/{2,}/g, '/');
+		if (s.startsWith('./')) s = s.slice(2);
+		return (root + s).replace(/\/{2,}/g, '/');
+	};
+
 	const buildBreadcrumbs = (path: string) => {
+		if (rootPath) {
+			const root = { label: '.', path: withSlash(rootPath) };
+			const rel = path.startsWith(withSlash(rootPath))
+				? path.slice(withSlash(rootPath).length)
+				: '';
+			return rel.split('/').filter(Boolean).reduce(
+				(acc, part) => {
+					const prev = acc[acc.length - 1];
+					acc.push({ label: part, path: `${prev.path}${part}/` });
+					return acc;
+				},
+				[root]
+			);
+		}
 		const parts = path.split('/').filter(Boolean);
 		const isDrive = /^[A-Za-z]:$/.test(parts[0] ?? '');
 		const root = isDrive ? { label: parts[0], path: `${parts[0]}/` } : { label: '/', path: '/' };
@@ -351,6 +399,115 @@
 			if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
 			return a.name.localeCompare(b.name);
 		});
+	};
+
+	// ── Path editor: type-to-navigate with VSCode-style filtered suggestions ─
+	let pathEditing = false;
+	let pathValue = '';
+	let pathInputEl: HTMLInputElement;
+	let pathSuggestions: FileEntry[] = [];
+	let pathSuggestDir: string | null = null; // dir currently listed for suggestions
+	let pathDirEntries: FileEntry[] = []; // raw listing of the typed dir part
+	let pathActiveIndex = -1;
+
+	const _dirPart = (p: string) => {
+		const i = p.lastIndexOf('/');
+		return i >= 0 ? p.slice(0, i + 1) : '';
+	};
+	const _namePart = (p: string) => {
+		const i = p.lastIndexOf('/');
+		return i >= 0 ? p.slice(i + 1) : p;
+	};
+
+	const openPathEditor = async () => {
+		// Start from the open file's path when one is shown, otherwise the dir.
+		pathValue = toDisplayPath(selectedFile ?? currentPath);
+		pathEditing = true;
+		pathSuggestDir = null;
+		await tick();
+		pathInputEl?.focus();
+		pathInputEl?.select();
+		updatePathSuggestions();
+	};
+	const closePathEditor = () => {
+		pathEditing = false;
+		pathSuggestions = [];
+		pathActiveIndex = -1;
+	};
+
+	// List the "directory part" of the typed path and filter its entries by the
+	// trailing "name part" — so typing filters live, and typing "/" dives in.
+	const updatePathSuggestions = async () => {
+		const terminal = getTerminal();
+		if (!terminal) {
+			pathSuggestions = [];
+			return;
+		}
+		const listDir = toAbsolutePath(_dirPart(pathValue) || './');
+		if (pathSuggestDir !== listDir) {
+			pathSuggestDir = listDir;
+			try {
+				pathDirEntries = await listFiles(terminal.url, terminal.key, listDir, chatId ?? undefined);
+			} catch {
+				pathDirEntries = [];
+			}
+		}
+		const q = _namePart(pathValue).toLowerCase();
+		pathSuggestions = pathDirEntries
+			.filter((e) => e.name.toLowerCase().includes(q))
+			.sort((a, b) =>
+				a.type !== b.type ? (a.type === 'directory' ? -1 : 1) : a.name.localeCompare(b.name)
+			)
+			.slice(0, 100);
+		pathActiveIndex = pathSuggestions.length ? 0 : -1;
+	};
+
+	const applyPathSuggestion = (entry: FileEntry) => {
+		const dir = _dirPart(pathValue);
+		if (entry.type === 'directory') {
+			pathValue = `${dir}${entry.name}/`;
+			pathInputEl?.focus();
+			updatePathSuggestions();
+		} else {
+			pathValue = `${dir}${entry.name}`;
+			submitPathEditor();
+		}
+	};
+
+	const submitPathEditor = async () => {
+		const target = pathValue.trim();
+		closePathEditor();
+		if (!target) return;
+		if (target.endsWith('/') || target === '.' || target === './') {
+			await loadDir(withSlash(toAbsolutePath(target)));
+		} else {
+			await loadDir(withSlash(toAbsolutePath(_dirPart(target) || './')));
+			await openEntry({ name: _namePart(target), type: 'file', size: 0 });
+		}
+	};
+
+	const onPathKeydown = (e: KeyboardEvent) => {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			closePathEditor();
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			if (pathSuggestions.length) pathActiveIndex = (pathActiveIndex + 1) % pathSuggestions.length;
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (pathSuggestions.length)
+				pathActiveIndex = (pathActiveIndex - 1 + pathSuggestions.length) % pathSuggestions.length;
+		} else if (e.key === 'Tab') {
+			e.preventDefault();
+			if (pathActiveIndex >= 0) applyPathSuggestion(pathSuggestions[pathActiveIndex]);
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			if (pathActiveIndex >= 0 && pathSuggestions[pathActiveIndex]?.type === 'directory') {
+				applyPathSuggestion(pathSuggestions[pathActiveIndex]);
+			} else {
+				submitPathEditor();
+			}
+		}
 	};
 
 	const openEntry = async (entry: FileEntry) => {
@@ -480,31 +637,34 @@
 		isDragOver = true;
 	};
 
+	const openUploadZone = () => {
+		showUploadZone = true;
+	};
+	const closeUploadZone = () => {
+		showUploadZone = false;
+		isDragOver = false;
+	};
+
 	const handleDrop = async (e: DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		isDragOver = false;
 
 		const terminal = selectedTerminal;
-		if (selectedFile || !terminal) return;
+		if (selectedFile || !terminal) {
+			showUploadZone = false;
+			return;
+		}
 
 		const droppedFiles = Array.from(e.dataTransfer?.files ?? []);
-		if (!droppedFiles.length) return;
+		if (!droppedFiles.length) {
+			showUploadZone = false;
+			return;
+		}
 
+		showUploadZone = false;
 		uploading = true;
 		for (const file of droppedFiles) {
-			await uploadToTerminal(terminal.url, terminal.key, currentPath, file, chatId ?? undefined);
-		}
-		uploading = false;
-		await loadDir(currentPath);
-	};
-
-	const handleUploadFiles = async (files: File[]) => {
-		const terminal = selectedTerminal;
-		if (!files.length || !terminal) return;
-
-		uploading = true;
-		for (const file of files) {
 			await uploadToTerminal(terminal.url, terminal.key, currentPath, file, chatId ?? undefined);
 		}
 		uploading = false;
@@ -811,11 +971,15 @@
 			const config = await getTerminalConfig(terminal.url, terminal.key);
 			terminalEnabled = config?.features?.terminal !== false;
 
+			// Always fetch the workspace root so paths can be shown relative to it
+			// ("./…"), even on a remount that restores a previously browsed path.
+			const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
+			const cwd = rawCwd ? normalizePath(rawCwd) : null;
+			if (cwd) rootPath = cwd.endsWith('/') ? cwd : cwd + '/';
+
 			if (chatId || savedPath === '/') {
-				// Fetch session-specific cwd from the server (or global default for new chats)
-				const rawCwd = await getCwd(terminal.url, terminal.key, chatId ?? undefined);
-				const cwd = rawCwd ? normalizePath(rawCwd) : null;
-				if (cwd) savedPath = cwd.endsWith('/') ? cwd : cwd + '/';
+				// Restore the session cwd as the browsed dir (root for new chats).
+				if (cwd) savedPath = rootPath;
 			}
 			loadDir(savedPath);
 		}
@@ -824,6 +988,7 @@
 
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') shiftKey = true;
+			if (e.key === 'Escape' && showUploadZone) closeUploadZone();
 		};
 		const onKeyUp = (e: KeyboardEvent) => {
 			if (e.key === 'Shift') shiftKey = false;
@@ -894,7 +1059,7 @@
 		role="region"
 		aria-label={$i18n.t('File browser')}
 	>
-		{#if isDragOver}
+		{#if isDragOver && !showUploadZone}
 			<div
 				class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 dark:bg-gray-850/80 backdrop-blur-sm pointer-events-none gap-1.5"
 			>
@@ -912,11 +1077,105 @@
 						d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
 					/>
 				</svg>
-				<span class="text-xs text-gray-400 dark:text-gray-500">{currentPath}</span>
+				<span class="text-xs text-gray-400 dark:text-gray-500">{toDisplayPath(currentPath)}</span>
+			</div>
+		{/if}
+
+		{#if showUploadZone}
+			<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+			<div
+				class="absolute inset-0 z-20 flex items-center justify-center p-3 bg-white/90 dark:bg-gray-850/90 backdrop-blur-sm"
+				on:click|self={closeUploadZone}
+			>
+				<div
+					class="relative w-full h-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed transition {isDragOver
+						? 'border-blue-400 dark:border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
+						: 'border-gray-300 dark:border-gray-600'}"
+				>
+					<button
+						class="absolute top-2 right-2 p-1 rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+						on:click={closeUploadZone}
+						aria-label={$i18n.t('Close')}
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="size-4"
+						>
+							<path
+								d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"
+							/>
+						</svg>
+					</button>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						class="size-6 text-gray-400 dark:text-gray-500"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+						/>
+					</svg>
+					<div class="text-sm text-gray-600 dark:text-gray-300 text-center px-3">
+						{$i18n.t('Drag and drop files here to upload')}
+					</div>
+					<div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-full px-3">
+						{toDisplayPath(currentPath)}
+					</div>
+				</div>
 			</div>
 		{/if}
 
 		{#if previewPort === null}
+			{#if pathEditing}
+				<div class="relative px-2 pb-1.5 shrink-0">
+					<input
+						bind:this={pathInputEl}
+						bind:value={pathValue}
+						type="text"
+						spellcheck="false"
+						autocomplete="off"
+						placeholder={$i18n.t('Type a path…')}
+						class="w-full text-xs px-2 py-1 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 shadow-sm outline-none transition focus:border-blue-400 dark:focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
+						on:input={updatePathSuggestions}
+						on:keydown={onPathKeydown}
+						on:blur={() => setTimeout(closePathEditor, 150)}
+					/>
+					{#if pathSuggestions.length}
+						<div
+							class="absolute left-2 right-2 top-full mt-1 z-50 max-h-64 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg py-1"
+						>
+							{#each pathSuggestions as s, i}
+								<button
+									type="button"
+									class="w-full flex items-center gap-2 px-2 py-1 text-xs text-left {i ===
+									pathActiveIndex
+										? 'bg-gray-100 dark:bg-gray-800'
+										: 'hover:bg-gray-50 dark:hover:bg-gray-850'}"
+									on:mousedown|preventDefault={() => applyPathSuggestion(s)}
+									on:mouseenter={() => (pathActiveIndex = i)}
+								>
+									{#if s.type === 'directory'}
+										<Folder className="size-3.5 shrink-0 text-blue-400 dark:text-blue-300" />
+									{:else}
+										<Document className="size-3.5 shrink-0 text-gray-400 dark:text-gray-500" />
+									{/if}
+									<span class="truncate text-gray-700 dark:text-gray-200">{s.name}</span>
+									{#if s.type === 'directory'}
+										<span class="ml-auto text-gray-300 dark:text-gray-600 select-none">/</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{:else}
 			<FileNavToolbar
 				breadcrumbs={buildBreadcrumbs(currentPath)}
 				{selectedFile}
@@ -936,9 +1195,10 @@
 				}}
 				onNewFolder={startNewFolder}
 				onNewFile={startNewFile}
-				onUploadFiles={handleUploadFiles}
+				onRequestUpload={openUploadZone}
 				onDownloadDir={() => downloadFile(currentPath)}
 				onMove={handleMove}
+				onEditPath={openPathEditor}
 			>
 				{#if fileImageUrl !== null || (fileOfficeSlides !== null && fileOfficeSlides.length > 0)}
 					<Tooltip content={$i18n.t('Reset view')}>
@@ -1215,6 +1475,7 @@
 					onSelectAll={selectAll}
 					onClear={clearSelection}
 				/>
+			{/if}
 			{/if}
 		{/if}
 
