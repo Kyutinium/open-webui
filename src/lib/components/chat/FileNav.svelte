@@ -1646,7 +1646,7 @@
 
 		<!-- Terminal bottom panel -->
 		{#if terminalEnabled}
-			<div class="shrink-0 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-850">
+			<div class="shrink-0 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-850">
 				{#if terminalExpanded}
 					<!-- Drag handle (at top of panel) -->
 					<!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -1660,7 +1660,7 @@
 
 				<!-- Toggle header (full-width button) -->
 				<button
-					class="w-full flex items-center gap-2 px-3 py-1 mb-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition"
+					class="w-full flex items-center gap-2 px-3 py-1 mb-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition"
 					on:click={toggleTerminal}
 				>
 					<svg
