@@ -76,7 +76,7 @@ export const ingestToolExplorerBlocks = (
 	// (old chats mount with done=true and populate silently), at most once per
 	// assistant turn so a manual switch away is respected.
 	const willFocus = !done && !!turnId && !_autoFocusedTurnIds.has(turnId);
-	console.debug(
+	console.warn(
 		'[search-results] new calls ingested',
 		{ turnId, done, willFocus, keys: Object.keys(next) }
 	);
