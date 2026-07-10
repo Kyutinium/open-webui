@@ -13,6 +13,7 @@
 	import { toast } from 'svelte-sonner';
 	import { getContext, onMount, onDestroy, tick } from 'svelte';
 	import {
+		config,
 		terminalServers,
 		settings,
 		showFileNavPath,
@@ -395,6 +396,31 @@
 		setCwd(terminal.url, terminal.key, path, chatId ?? undefined);
 
 		error = null;
+		entries = result.sort((a, b) => {
+			if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
+	};
+
+	// Silently re-list the current directory (periodic auto-refresh). Unlike
+	// loadDir this must not disturb UI state: no spinner, no nav-history push,
+	// no selection/preview reset, and no error toasts on transient failures.
+	const refreshEntries = async () => {
+		const terminal = selectedTerminal;
+		if (!terminal || loading || uploading) return;
+		if (selectedFile || previewPort !== null) return;
+		if (pathEditing || creatingFolder || creatingFile || showUploadZone) return;
+		if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+		const path = currentPath;
+		let result: FileEntry[];
+		try {
+			result = await listFiles(terminal.url, terminal.key, path, chatId ?? undefined);
+		} catch {
+			return;
+		}
+		// Stale guard: the user may have navigated or opened a file meanwhile.
+		if (path !== currentPath || selectedFile) return;
 		entries = result.sort((a, b) => {
 			if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
 			return a.name.localeCompare(b.name);
@@ -1006,9 +1032,19 @@
 		window.addEventListener('blur', onBlur);
 		document.addEventListener('visibilitychange', onVisibilityChange);
 
+		// Periodic silent refresh of the directory listing so files created by
+		// the agent mid-run show up without a manual refresh. Interval comes
+		// from the backend env FILE_NAV_REFRESH_INTERVAL (seconds, <= 0 off).
+		const refreshSeconds = Number($config?.features?.file_nav_refresh_interval ?? 10);
+		let refreshTimer: ReturnType<typeof setInterval> | null = null;
+		if (refreshSeconds > 0) {
+			refreshTimer = setInterval(refreshEntries, refreshSeconds * 1000);
+		}
+
 		return () => {
 			unsubFileNav();
 			unsubFileNavDir();
+			if (refreshTimer !== null) clearInterval(refreshTimer);
 			window.removeEventListener('keydown', onKeyDown);
 			window.removeEventListener('keyup', onKeyUp);
 			window.removeEventListener('blur', onBlur);

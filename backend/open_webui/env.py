@@ -238,6 +238,14 @@ ENABLE_FORWARD_USER_INFO_HEADERS = os.environ.get('ENABLE_FORWARD_USER_INFO_HEAD
 # existing behavior.
 ENABLE_TERMINAL_TOOLS = os.environ.get('ENABLE_TERMINAL_TOOLS', 'True').lower() == 'true'
 
+# How often (seconds) the workspace file browser (FileNav) silently refreshes
+# the current directory listing, so files the agent creates mid-run appear
+# without a manual refresh. Values <= 0 disable the periodic refresh.
+try:
+    FILE_NAV_REFRESH_INTERVAL = float(os.environ.get('FILE_NAV_REFRESH_INTERVAL', '10'))
+except Exception:
+    FILE_NAV_REFRESH_INTERVAL = 10.0
+
 # Header names for user info forwarding (customizable via environment variables)
 FORWARD_USER_INFO_HEADER_USER_NAME = os.environ.get('FORWARD_USER_INFO_HEADER_USER_NAME', 'X-OpenWebUI-User-Name')
 FORWARD_USER_INFO_HEADER_USER_ID = os.environ.get('FORWARD_USER_INFO_HEADER_USER_ID', 'X-OpenWebUI-User-Id')
