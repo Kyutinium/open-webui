@@ -37,10 +37,11 @@
 					</svg>
 				</button>
 			</div>
-			<div
-				class="text-sm text-gray-700 dark:text-gray-200 markdown-prose max-h-[60vh] overflow-y-auto"
-			>
-				{@html DOMPurify.sanitize(marked.parse((banner.content ?? '').replace(/\n/g, '<br>')))}
+			<div class="text-gray-700 dark:text-gray-200 markdown-prose-sm max-h-[60vh] overflow-y-auto">
+				<!-- No newline->br preprocessing: it would collapse block markdown
+				     (headings, lists, code fences) into one paragraph. breaks:true
+				     handles single-newline line breaks the GFM way instead. -->
+				{@html DOMPurify.sanitize(marked.parse(banner.content ?? '', { breaks: true }))}
 			</div>
 			<div class="mt-5 flex justify-end">
 				<button
