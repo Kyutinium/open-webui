@@ -44,28 +44,13 @@ export const ingestToolExplorerBlocks = (
 	let addedNew = false;
 	const existing = get(toolExplorerData) as Record<string, any[]> | null;
 	const next: Record<string, any[]> = existing ? { ...existing } : {};
-	const matches = [...text.matchAll(EXPLORER_DETAILS_RE)];
-	console.warn('[search-results] scan', {
-		turnId,
-		done,
-		contentLen: text.length,
-		matches: matches.length
-	});
-	for (const m of matches) {
+	for (const m of text.matchAll(EXPLORER_DETAILS_RE)) {
 		let data: Record<string, any[]>;
-		const body = m[1].replace(/^> /gm, '').trim();
 		try {
-			data = JSON.parse(body);
-		} catch (e) {
-			console.warn('[search-results] block parse FAILED', {
-				snippet: body.slice(0, 150)
-			});
+			data = JSON.parse(m[1].replace(/^> /gm, '').trim());
+		} catch {
 			continue;
 		}
-		console.warn('[search-results] block parsed', {
-			keys: Object.keys(data),
-			snippet: body.slice(0, 150)
-		});
 		for (const [key, val] of Object.entries(data)) {
 			if (!Array.isArray(val)) continue;
 			if (!next[key]) next[key] = [];
@@ -90,13 +75,8 @@ export const ingestToolExplorerBlocks = (
 	// Auto-focus only for genuinely new results on a still-streaming message
 	// (old chats mount with done=true and populate silently), at most once per
 	// assistant turn so a manual switch away is respected.
-	const willFocus = !done && !!turnId && !_autoFocusedTurnIds.has(turnId);
-	console.warn(
-		'[search-results] new calls ingested',
-		{ turnId, done, willFocus, keys: Object.keys(next) }
-	);
-	if (willFocus) {
-		_autoFocusedTurnIds.add(turnId as string);
+	if (!done && turnId && !_autoFocusedTurnIds.has(turnId)) {
+		_autoFocusedTurnIds.add(turnId);
 		showToolExplorer.set(true);
 	}
 };

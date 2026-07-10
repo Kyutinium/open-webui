@@ -672,9 +672,6 @@
 						// prevents that.
 						if (addedNewCalls && !message._searchResultsFocused) {
 							message._searchResultsFocused = true;
-							console.warn('[search-results] live populator: new results — focusing', {
-								messageId: message.id
-							});
 							showToolExplorer.set(true);
 						} else if (!message._controlsOpened) {
 							message._controlsOpened = true;

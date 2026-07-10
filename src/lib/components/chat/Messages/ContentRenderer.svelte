@@ -66,13 +66,6 @@
 			if (n > 2) {
 				const historyDone = history?.messages?.[messageId]?.done;
 				const messageDone = _sawStreaming ? false : (historyDone ?? done);
-				console.warn('[search-results] trigger', {
-					messageId,
-					n,
-					historyDone,
-					sawStreaming: _sawStreaming,
-					doneProp: done
-				});
 				ingestToolExplorerBlocks(content, { turnId: messageId, done: messageDone });
 			}
 		}
