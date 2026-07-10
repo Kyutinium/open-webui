@@ -33,6 +33,9 @@
 
 	// Track which chatId the tool explorer was last populated for
 	let _toolExplorerChatId = '';
+	// Assistant turns that already auto-focused the Tool Results tab (one
+	// yank per turn; further results in the same turn update it silently).
+	let _autoOpenedTurnIds = new Set<string>();
 
 	function autoOpenToolExplorer(node: HTMLElement, params: { data: Record<string, any[]>; messageDone: boolean; turnId?: string }) {
 		const { data, messageDone, turnId } = params;
@@ -41,10 +44,12 @@
 		// If chatId changed since last population, reset first
 		if (_toolExplorerChatId && _toolExplorerChatId !== currentChatId) {
 			toolExplorerData.set(null);
+			_autoOpenedTurnIds = new Set();
 		}
 		_toolExplorerChatId = currentChatId;
 		const existing = get(toolExplorerData);
 		const tagged = (calls: any[]) => calls.map((c) => (turnId && !c.turnId ? { ...c, turnId } : c));
+		let addedNew = false;
 		if (existing) {
 			const merged = { ...existing };
 			for (const [key, calls] of Object.entries(data)) {
@@ -56,7 +61,10 @@
 							c.query === call.query &&
 							c.results?.length === call.results?.length
 					);
-					if (!isDup) merged[key] = [...merged[key], call];
+					if (!isDup) {
+						merged[key] = [...merged[key], call];
+						addedNew = true;
+					}
 				}
 			}
 			toolExplorerData.set(merged);
@@ -64,12 +72,20 @@
 			const seeded: Record<string, any[]> = {};
 			for (const [key, calls] of Object.entries(data)) {
 				seeded[key] = tagged(calls as any[]);
+				if ((calls as any[]).length > 0) addedNew = true;
 			}
 			toolExplorerData.set(seeded);
 		}
-		// Populate only — do NOT auto-open the Tool Results tab on render, which
-		// stole focus from the tab the user was viewing. The explicit
-		// "View searched documents" button still opens it on click.
+		// Auto-focus the Tool Results tab when NEW results land during a live
+		// (not-yet-done) response — at most once per assistant turn, so the user
+		// notices the results without the tab stealing focus on every stream
+		// re-render (the old bug) or when an old chat's messages mount
+		// (messageDone is true there). Manual tab switches after the one yank
+		// are respected; the "View searched documents" button still works.
+		if (addedNew && !messageDone && turnId && !_autoOpenedTurnIds.has(turnId)) {
+			_autoOpenedTurnIds.add(turnId);
+			showToolExplorer.set(true);
+		}
 	}
 
 	export let id: string;
