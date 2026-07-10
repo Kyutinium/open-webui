@@ -199,8 +199,10 @@
 				return [];
 			}
 		})();
+		// Non-dismissible popups always show (forced notices) — even if the
+		// user dismissed them back when "Remember Dismissal" was still on.
 		announcementQueue = bannersData.filter(
-			(b) => b.type === 'popup' && !dismissedIds.includes(b.id)
+			(b) => b.type === 'popup' && (!b.dismissible || !dismissedIds.includes(b.id))
 		);
 		showNextAnnouncement();
 	};
