@@ -624,6 +624,23 @@
 			<span use:autoOpenToolExplorer={{ data: explorerData, messageDone: done, turnId: messageId }} class="hidden" />
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'search_results_button'}
+		<!-- Live auto-populate + one-shot Tool Results focus: some messages emit
+		     only search_results_button (no tool_explorer block), so without this
+		     the results never reach the store or the sidebar until the button is
+		     clicked after completion. Same gates as tool_explorer: fires only on
+		     genuinely new calls, while streaming, once per turn. -->
+		{@const liveExplorerData = (() => {
+			try {
+				const text = decode(token?.text || '').replace(/<summary>.*?<\/summary>/gi, '').trim();
+				return JSON.parse(text);
+			} catch { return null; }
+		})()}
+		{#if liveExplorerData}
+			<span
+				use:autoOpenToolExplorer={{ data: liveExplorerData, messageDone: done, turnId: messageId }}
+				class="hidden"
+			/>
+		{/if}
 		<!-- Final "검색된 문서 보기" button (only shown after done) -->
 		{#if done}
 			{@const explorerData = (() => {
