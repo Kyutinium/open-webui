@@ -858,7 +858,11 @@
 			// Clear tool explorer data when switching between existing chats
 			toolExplorerData.set(null);
 			showToolExplorer.set(false);
-			showControls.set(false);
+			// With a terminal connected, the Files sidebar is the default
+			// workspace view — keep the panel open across chat switches.
+			if (!get(selectedTerminalId)) {
+				showControls.set(false);
+			}
 		});
 
 		const selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
