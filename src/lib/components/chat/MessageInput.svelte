@@ -1200,6 +1200,9 @@
 			<div class="text-xs text-gray-400 dark:text-gray-500">
 				{$i18n.t('Files will be attached to your message')}
 			</div>
+			<div class="text-xs text-amber-600 dark:text-amber-400">
+				{$i18n.t('NASCA-encrypted files cannot be read.')}
+			</div>
 		</div>
 	</div>
 {/if}

@@ -1114,6 +1114,7 @@
 					/>
 				</svg>
 				<span class="text-xs text-gray-400 dark:text-gray-500">{toDisplayPath(currentPath)}</span>
+				<span class="text-xs text-amber-600 dark:text-amber-400">{$i18n.t('NASCA-encrypted files cannot be read.')}</span>
 			</div>
 		{/if}
 
@@ -1163,6 +1164,9 @@
 					</div>
 					<div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-full px-3">
 						{toDisplayPath(currentPath)}
+					</div>
+					<div class="text-xs text-amber-600 dark:text-amber-400 px-3">
+						{$i18n.t('NASCA-encrypted files cannot be read.')}
 					</div>
 				</div>
 			</div>
