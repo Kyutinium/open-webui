@@ -86,6 +86,40 @@ export const listFiles = async (
 	return json?.entries ?? [];
 };
 
+export type SearchResult = {
+	path: string;
+	name: string;
+	type: 'file' | 'directory';
+	size?: number;
+	modified?: number;
+};
+
+export const searchFiles = async (
+	baseUrl: string,
+	apiKey: string,
+	query: string,
+	limit: number = 50,
+	sessionId?: string
+): Promise<{ results: SearchResult[]; truncated: boolean }> => {
+	const url = `${baseUrl.replace(/\/$/, '')}/files/search?query=${encodeURIComponent(query)}&limit=${limit}`;
+	const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+	if (sessionId) headers['X-Session-Id'] = sessionId;
+	const res = await fetch(url, { headers }).catch(() => null);
+	if (!res) throw new Error('Failed to reach the terminal server.');
+	if (res.status === 404) throw new Error('Search is not supported by this server.');
+	if (!res.ok) {
+		let detail = '';
+		try {
+			detail = (await res.json())?.detail ?? '';
+		} catch {
+			// non-JSON body
+		}
+		throw new Error(detail || `Search failed (${res.status}).`);
+	}
+	const json = await res.json().catch(() => null);
+	return { results: json?.results ?? [], truncated: !!json?.truncated };
+};
+
 export const readFile = async (
 	baseUrl: string,
 	apiKey: string,

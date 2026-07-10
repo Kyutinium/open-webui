@@ -32,7 +32,9 @@
 		deleteEntry,
 		moveEntry,
 		setCwd,
-		type FileEntry
+		searchFiles,
+		type FileEntry,
+		type SearchResult
 	} from '$lib/apis/terminal';
 	import { isCodeFile } from '$lib/utils/codeHighlight';
 	import Folder from '../icons/Folder.svelte';
@@ -46,6 +48,7 @@
 
 	import FileNavToolbar from './FileNav/FileNavToolbar.svelte';
 	import FilePreview from './FileNav/FilePreview.svelte';
+	import Search from '../icons/Search.svelte';
 	import FileEntryRow from './FileNav/FileEntryRow.svelte';
 	import BulkActionBar from './FileNav/BulkActionBar.svelte';
 	import PortList from './FileNav/PortList.svelte';
@@ -425,6 +428,84 @@
 			if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
 			return a.name.localeCompare(b.name);
 		});
+	};
+
+	// ── Workspace search (recursive filename search via /files/search) ───
+	let searchOpen = false;
+	let searchQuery = '';
+	let searchInputEl: HTMLInputElement;
+	let searchResults: SearchResult[] = [];
+	let searchLoading = false;
+	let searchError: string | null = null;
+	let searchTruncated = false;
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+	let searchSeq = 0;
+
+	const openSearch = async () => {
+		searchOpen = true;
+		await tick();
+		searchInputEl?.focus();
+	};
+
+	const closeSearch = () => {
+		searchOpen = false;
+		searchQuery = '';
+		searchResults = [];
+		searchError = null;
+		searchTruncated = false;
+		searchLoading = false;
+		searchSeq++;
+	};
+
+	const runSearch = async () => {
+		const terminal = getTerminal();
+		const q = searchQuery.trim();
+		if (!terminal || !q) {
+			searchResults = [];
+			searchError = null;
+			searchTruncated = false;
+			searchLoading = false;
+			return;
+		}
+		const seq = ++searchSeq;
+		searchLoading = true;
+		searchError = null;
+		try {
+			const { results, truncated } = await searchFiles(
+				terminal.url,
+				terminal.key,
+				q,
+				50,
+				chatId ?? undefined
+			);
+			if (seq !== searchSeq) return;
+			searchResults = results;
+			searchTruncated = truncated;
+		} catch (err) {
+			if (seq !== searchSeq) return;
+			searchResults = [];
+			searchTruncated = false;
+			searchError = err instanceof Error ? err.message : 'Search failed.';
+		} finally {
+			if (seq === searchSeq) searchLoading = false;
+		}
+	};
+
+	const onSearchInput = () => {
+		if (searchDebounce) clearTimeout(searchDebounce);
+		searchDebounce = setTimeout(runSearch, 300);
+	};
+
+	const openSearchResult = async (r: SearchResult) => {
+		const dir =
+			r.type === 'directory'
+				? withSlash(r.path)
+				: r.path.slice(0, r.path.lastIndexOf('/') + 1);
+		closeSearch();
+		await loadDir(dir);
+		if (r.type !== 'directory') {
+			await openEntry({ name: r.name, type: 'file', size: r.size ?? 0 });
+		}
 	};
 
 	// ── Path editor: type-to-navigate with VSCode-style filtered suggestions ─
@@ -1236,6 +1317,7 @@
 				onNewFolder={startNewFolder}
 				onNewFile={startNewFile}
 				onRequestUpload={openUploadZone}
+				onSearch={openSearch}
 				onDownloadDir={() => downloadFile(currentPath)}
 				onMove={handleMove}
 				onEditPath={openPathEditor}
@@ -1502,6 +1584,48 @@
 				</Tooltip>
 			</FileNavToolbar>
 
+			{#if searchOpen}
+				<div class="px-2 pb-1.5 shrink-0 flex items-center gap-1.5">
+					<div class="relative flex-1">
+						<div class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500">
+							<Search className="size-3.5" />
+						</div>
+						<input
+							bind:this={searchInputEl}
+							bind:value={searchQuery}
+							type="text"
+							spellcheck="false"
+							autocomplete="off"
+							placeholder={$i18n.t('Search the workspace')}
+							class="w-full text-xs pl-7 pr-2 py-1 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 shadow-sm outline-none transition focus:border-blue-400 dark:focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
+							on:input={onSearchInput}
+							on:keydown={(e) => {
+								if (e.key === 'Escape') {
+									e.preventDefault();
+									closeSearch();
+								}
+							}}
+						/>
+					</div>
+					<button
+						class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+						on:click={closeSearch}
+						aria-label={$i18n.t('Close')}
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="size-3.5"
+						>
+							<path
+								d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"
+							/>
+						</svg>
+					</button>
+				</div>
+			{/if}
+
 			<!-- Bulk action bar -->
 			{#if selectedCount > 0}
 				<BulkActionBar
@@ -1526,7 +1650,49 @@
 				if (e.target === e.currentTarget && selectedCount > 0) clearSelection();
 			}}
 		>
-			{#if previewPort !== null}
+			{#if searchOpen && searchQuery.trim()}
+				<div class="px-1 py-1">
+					{#if searchLoading && searchResults.length === 0}
+						<div class="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">
+							{$i18n.t('Searching')}...
+						</div>
+					{:else if searchError}
+						<div class="text-xs text-red-500 px-3 py-2">{searchError}</div>
+					{:else if searchResults.length === 0}
+						<div class="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">
+							{$i18n.t('No results found')}
+						</div>
+					{:else}
+						<ul>
+							{#each searchResults as r (r.path)}
+								<li>
+									<button
+										class="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition text-left"
+										on:click={() => openSearchResult(r)}
+									>
+										{#if r.type === 'directory'}
+											<Folder className="size-4 shrink-0 text-blue-400 dark:text-blue-300" />
+										{:else}
+											<Document className="size-4 shrink-0 text-gray-400 dark:text-gray-500" />
+										{/if}
+										<div class="min-w-0 flex-1">
+											<div class="text-sm text-gray-700 dark:text-gray-200 truncate">{r.name}</div>
+											<div class="text-xs text-gray-400 dark:text-gray-500 truncate">
+												{toDisplayPath(r.path)}
+											</div>
+										</div>
+									</button>
+								</li>
+							{/each}
+						</ul>
+						{#if searchTruncated}
+							<div class="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">
+								{$i18n.t('More results were found — refine your search')}
+							</div>
+						{/if}
+					{/if}
+				</div>
+			{:else if previewPort !== null}
 				<PortPreview
 					baseUrl={selectedTerminal?.url ?? ''}
 					port={previewPort}
