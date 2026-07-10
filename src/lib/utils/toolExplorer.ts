@@ -44,13 +44,28 @@ export const ingestToolExplorerBlocks = (
 	let addedNew = false;
 	const existing = get(toolExplorerData) as Record<string, any[]> | null;
 	const next: Record<string, any[]> = existing ? { ...existing } : {};
-	for (const m of text.matchAll(EXPLORER_DETAILS_RE)) {
+	const matches = [...text.matchAll(EXPLORER_DETAILS_RE)];
+	console.warn('[search-results] scan', {
+		turnId,
+		done,
+		contentLen: text.length,
+		matches: matches.length
+	});
+	for (const m of matches) {
 		let data: Record<string, any[]>;
+		const body = m[1].replace(/^> /gm, '').trim();
 		try {
-			data = JSON.parse(m[1].replace(/^> /gm, '').trim());
-		} catch {
+			data = JSON.parse(body);
+		} catch (e) {
+			console.warn('[search-results] block parse FAILED', {
+				snippet: body.slice(0, 150)
+			});
 			continue;
 		}
+		console.warn('[search-results] block parsed', {
+			keys: Object.keys(data),
+			snippet: body.slice(0, 150)
+		});
 		for (const [key, val] of Object.entries(data)) {
 			if (!Array.isArray(val)) continue;
 			if (!next[key]) next[key] = [];
