@@ -1629,8 +1629,9 @@
 			{/if}
 		</div>
 
-		<!-- Port detection -->
-		{#if selectedTerminal && !selectedFile && previewPort === null}
+		<!-- Port detection — hidden (change `false` back to restore the Ports
+		     section; the preview plumbing stays intact). -->
+		{#if false && selectedTerminal && !selectedFile && previewPort === null}
 			<div class="shrink-0 border-t border-gray-100 dark:border-gray-800">
 				<PortList
 					baseUrl={selectedTerminal.url}
