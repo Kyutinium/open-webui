@@ -44,6 +44,7 @@
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
+	import AnnouncementModal from '$lib/components/AnnouncementModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -185,7 +186,59 @@
 	const setBanners = async () => {
 		const bannersData = await getBanners(localStorage.token);
 		banners.set(bannersData);
+
+		// Popup announcements: banners with type 'popup' render as a modal on
+		// load instead of the navbar strip. Dismissible ones are remembered in
+		// the same localStorage key the strip uses; non-dismissible ones
+		// reappear on every load (forced notices).
+		const dismissedIds = (() => {
+			try {
+				const parsed = JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]');
+				return Array.isArray(parsed) ? parsed : [];
+			} catch {
+				return [];
+			}
+		})();
+		announcementQueue = bannersData.filter(
+			(b) => b.type === 'popup' && !dismissedIds.includes(b.id)
+		);
+		showNextAnnouncement();
 	};
+
+	let announcementQueue = [];
+	let currentAnnouncement = null;
+	let showAnnouncement = false;
+
+	const showNextAnnouncement = () => {
+		currentAnnouncement = announcementQueue.shift() ?? null;
+		showAnnouncement = !!currentAnnouncement;
+	};
+
+	const handleAnnouncementClose = () => {
+		const banner = currentAnnouncement;
+		currentAnnouncement = null;
+		if (banner?.dismissible) {
+			try {
+				const prev = JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]');
+				localStorage.setItem(
+					'dismissedBannerIds',
+					JSON.stringify(
+						[banner.id, ...(Array.isArray(prev) ? prev : [])].filter((id) =>
+							$banners.find((b) => b.id === id)
+						)
+					)
+				);
+			} catch {
+				localStorage.setItem('dismissedBannerIds', JSON.stringify([banner.id]));
+			}
+		}
+		showNextAnnouncement();
+	};
+
+	// Modal closes via bind:show (button, backdrop, or Esc) — react here.
+	$: if (!showAnnouncement && currentAnnouncement) {
+		handleAnnouncementClose();
+	}
 
 	const setTools = async () => {
 		const toolsData = await getTools(localStorage.token);
@@ -379,6 +432,7 @@
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
+<AnnouncementModal bind:show={showAnnouncement} banner={currentAnnouncement} />
 
 {#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>
