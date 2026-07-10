@@ -14,7 +14,7 @@
 </script>
 
 {#if banner}
-	<Modal bind:show size="sm">
+	<Modal bind:show size="md">
 		<div class="px-6 pt-5 pb-6">
 			<div class="flex items-start justify-between gap-3 mb-3">
 				<div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
