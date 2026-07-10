@@ -15,6 +15,8 @@
 	import FloatingButtons from '../ContentRenderer/FloatingButtons.svelte';
 	import { createMessagesList } from '$lib/utils';
 
+	import { ingestToolExplorerBlocks } from '$lib/utils/toolExplorer';
+
 	export let id;
 	export let content;
 
@@ -38,6 +40,21 @@
 	export let onSourceClick = (e) => {};
 	export let onTaskClick = (e) => {};
 	export let onAddMessages = (e) => {};
+
+	// Live Tool Results ingestion from the raw content — see utils/toolExplorer.
+	// Gated on the count of closed </details> tags (plain or HTML-encoded) so
+	// the full regex scan runs once per completed block, not per token delta.
+	let _detailsCloseCount = -1;
+	$: if (content && messageId) {
+		const n =
+			content.split('</details>').length + content.split('&lt;/details&gt;').length;
+		if (n !== _detailsCloseCount) {
+			_detailsCloseCount = n;
+			if (n > 2) {
+				ingestToolExplorerBlocks(content, { turnId: messageId, done });
+			}
+		}
+	}
 
 	let contentContainerElement;
 	let floatingButtonsElement;
