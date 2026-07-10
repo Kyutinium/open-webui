@@ -90,6 +90,9 @@
 
 	// When tool explorer wants to open, switch to the tool_results tab
 	$: if ($showToolExplorer && showToolResultsTab) {
+		console.debug('[search-results] focus signal received, switching tab', {
+			from: activeTab
+		});
 		activeTab = 'tool_results';
 		showToolExplorer.set(false);
 	}

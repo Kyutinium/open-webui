@@ -75,8 +75,13 @@ export const ingestToolExplorerBlocks = (
 	// Auto-focus only for genuinely new results on a still-streaming message
 	// (old chats mount with done=true and populate silently), at most once per
 	// assistant turn so a manual switch away is respected.
-	if (!done && turnId && !_autoFocusedTurnIds.has(turnId)) {
-		_autoFocusedTurnIds.add(turnId);
+	const willFocus = !done && !!turnId && !_autoFocusedTurnIds.has(turnId);
+	console.debug(
+		'[search-results] new calls ingested',
+		{ turnId, done, willFocus, keys: Object.keys(next) }
+	);
+	if (willFocus) {
+		_autoFocusedTurnIds.add(turnId as string);
 		showToolExplorer.set(true);
 	}
 };

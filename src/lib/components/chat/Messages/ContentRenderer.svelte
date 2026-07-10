@@ -44,6 +44,9 @@
 	// Live Tool Results ingestion from the raw content — see utils/toolExplorer.
 	// Gated on the count of closed </details> tags (plain or HTML-encoded) so
 	// the full regex scan runs once per completed block, not per token delta.
+	// Doneness comes from history (the real message state): the `done` render
+	// prop is `true` during streaming when chatFadeStreamingText is disabled,
+	// which would permanently suppress the auto-focus.
 	let _detailsCloseCount = -1;
 	$: if (content && messageId) {
 		const n =
@@ -51,7 +54,8 @@
 		if (n !== _detailsCloseCount) {
 			_detailsCloseCount = n;
 			if (n > 2) {
-				ingestToolExplorerBlocks(content, { turnId: messageId, done });
+				const messageDone = history?.messages?.[messageId]?.done ?? done;
+				ingestToolExplorerBlocks(content, { turnId: messageId, done: messageDone });
 			}
 		}
 	}
