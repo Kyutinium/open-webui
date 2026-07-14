@@ -417,13 +417,23 @@
 			}
 		});
 
-		// Auto-connect: when no terminal was previously selected but terminals
-		// are available, select the first one so the Files sidebar can open by
-		// default without a manual pick. Deselecting mid-session is respected;
-		// this only runs at load time. (terminalServers is already loaded — the
-		// Promise.all above awaited setToolServers.)
-		if (!$selectedTerminalId) {
-			const availableTerminals = $terminalServers ?? [];
+		// Terminal selection policy (terminalServers is already loaded — the
+		// Promise.all above awaited setToolServers):
+		// * Non-admins always use the admin-designated (system) terminal: the
+		//   selection menu is read-only for them (TerminalMenu.svelte), and any
+		//   stale/cleared selection persisted in localStorage is overridden here.
+		// * Admins keep free choice; only auto-connect when nothing is selected
+		//   so the Files sidebar can open by default without a manual pick.
+		const availableTerminals = $terminalServers ?? [];
+		if ($user?.role !== 'admin') {
+			const systemTerminals = availableTerminals.filter((t) => t.id);
+			if (systemTerminals.length > 0) {
+				const current = systemTerminals.find((t) => t.id === $selectedTerminalId);
+				if (!current) {
+					selectedTerminalId.set(systemTerminals[0].id);
+				}
+			}
+		} else if (!$selectedTerminalId) {
 			if (availableTerminals.length > 0) {
 				selectedTerminalId.set(availableTerminals[0].id ?? availableTerminals[0].url);
 			}
