@@ -166,7 +166,7 @@
 	}
 </script>
 
-<div class="flex flex-col h-full bg-white dark:bg-gray-850 border-l border-gray-100 dark:border-gray-800">
+<div class="flex flex-col h-full bg-gray-50 dark:bg-gray-850 border-l border-gray-200 dark:border-gray-800">
 	<!-- Header -->
 	<div class="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-gray-800 shrink-0">
 		<div class="flex items-center gap-2 min-w-0">
@@ -195,7 +195,7 @@
 				type="text"
 				bind:value={searchQuery}
 				placeholder="{$i18n.t('Search all results')}... ({tabCount('all')})"
-				class="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+				class="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
 			/>
 		</div>
 	</div>
@@ -269,7 +269,7 @@
 						{@const isExpanded = isSearching || expandedQueries[queryKey] !== false}
 						<!-- Query row -->
 				<button
-					class="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition"
+					class="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition"
 					on:click={() => toggleQuery(queryKey)}
 				>
 					<svg
@@ -294,7 +294,7 @@
 					{#each call.results as result, resultIdx}
 						<!-- svelte-ignore a11y-no-static-element-interactions -->
 						<div
-							class="flex gap-2.5 px-3 py-2 ml-5 border-b border-gray-50/50 dark:border-gray-800/30 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 cursor-grab active:cursor-grabbing"
+							class="flex gap-2.5 px-3 py-2 ml-5 border-b border-gray-100/60 dark:border-gray-800/30 hover:bg-gray-100/60 dark:hover:bg-gray-800/30 cursor-grab active:cursor-grabbing"
 							draggable="true"
 							on:dragstart={(e) => {
 								const text = result.url

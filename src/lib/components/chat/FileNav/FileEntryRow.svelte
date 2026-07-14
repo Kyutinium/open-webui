@@ -124,7 +124,7 @@
 <li class="group">
 	<div
 		class="w-full flex items-center transition
-			{selected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-800'}
+			{selected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}
 			{dragOverFolder
 			? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-400 dark:ring-blue-500 ring-inset'
 			: ''}"

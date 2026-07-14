@@ -94,7 +94,7 @@
 	<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 	<div
 		bind:this={breadcrumbEl}
-		class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none cursor-text rounded-lg px-1.5 py-0.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 transition"
+		class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none cursor-text rounded-lg px-1.5 py-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 transition"
 		title={$i18n.t('Click to edit path')}
 		on:click={onEditPath}
 	>
