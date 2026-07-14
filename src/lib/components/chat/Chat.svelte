@@ -2189,7 +2189,12 @@
 			scrollToBottom();
 		}
 
-		// Persist to backend so refresh keeps the continuation visible.
+		// Persist to backend so refresh keeps the continuation visible.  The
+		// AUQ relay bypasses the chat completion channel, so nothing saves
+		// this message server-side unless we do it here.
+		await saveChatHandler(_chatId, history);
+
+		// Refresh the sidebar chat list.
 		chatCompletedHandler(
 			_chatId,
 			modelId,
