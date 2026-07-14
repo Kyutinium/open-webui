@@ -231,6 +231,19 @@
 				openPane();
 			}
 
+			// Default-open the Files sidebar when a terminal is connected —
+			// the selection persists in localStorage across reloads, so a
+			// user with a terminal set up starts with their workspace
+			// visible. (The reactive auto-open below covers the case where
+			// the terminal-server list finishes loading after mount.)
+			if ($selectedTerminalId && showFilesTab && largeScreen && !$showControls) {
+				activeTab = 'files';
+				showControls.set(true);
+				if (pane) {
+					openPane();
+				}
+			}
+
 			setTimeout(() => {
 				paneReady = true;
 			}, 0);

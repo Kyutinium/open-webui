@@ -417,6 +417,18 @@
 			}
 		});
 
+		// Auto-connect: when no terminal was previously selected but terminals
+		// are available, select the first one so the Files sidebar can open by
+		// default without a manual pick. Deselecting mid-session is respected;
+		// this only runs at load time. (terminalServers is already loaded — the
+		// Promise.all above awaited setToolServers.)
+		if (!$selectedTerminalId) {
+			const availableTerminals = $terminalServers ?? [];
+			if (availableTerminals.length > 0) {
+				selectedTerminalId.set(availableTerminals[0].id ?? availableTerminals[0].url);
+			}
+		}
+
 		await tick();
 
 		loaded = true;
