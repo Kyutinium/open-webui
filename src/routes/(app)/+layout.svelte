@@ -418,24 +418,17 @@
 		});
 
 		// Terminal selection policy (terminalServers is already loaded — the
-		// Promise.all above awaited setToolServers):
-		// * Non-admins always use the admin-designated (system) terminal: the
-		//   selection menu is read-only for them (TerminalMenu.svelte), and any
-		//   stale/cleared selection persisted in localStorage is overridden here.
-		// * Admins keep free choice; only auto-connect when nothing is selected
-		//   so the Files sidebar can open by default without a manual pick.
-		const availableTerminals = $terminalServers ?? [];
-		if ($user?.role !== 'admin') {
-			const systemTerminals = availableTerminals.filter((t) => t.id);
-			if (systemTerminals.length > 0) {
-				const current = systemTerminals.find((t) => t.id === $selectedTerminalId);
-				if (!current) {
-					selectedTerminalId.set(systemTerminals[0].id);
-				}
-			}
-		} else if (!$selectedTerminalId) {
-			if (availableTerminals.length > 0) {
-				selectedTerminalId.set(availableTerminals[0].id ?? availableTerminals[0].url);
+		// Promise.all above awaited setToolServers): everyone — admins included —
+		// always uses the admin-designated (system) terminal. There is no
+		// selection menu (TerminalMenu.svelte is a read-only indicator), and any
+		// stale/cleared selection persisted in localStorage is overridden here.
+		// A previously valid system selection is kept for deployments with more
+		// than one designated terminal.
+		const systemTerminals = ($terminalServers ?? []).filter((t) => t.id);
+		if (systemTerminals.length > 0) {
+			const current = systemTerminals.find((t) => t.id === $selectedTerminalId);
+			if (!current) {
+				selectedTerminalId.set(systemTerminals[0].id);
 			}
 		}
 
