@@ -2287,5 +2287,7 @@
 	"Search Results": "검색 결과",
 	"Drag and drop files here to upload": "여기에 파일을 끌어다 놓아 업로드하세요",
 	"Files will be attached to your message": "파일이 메시지에 첨부됩니다",
-	"NASCA-encrypted files cannot be read.": "NASCA로 암호화된 파일은 읽을 수 없습니다."
+	"NASCA-encrypted files cannot be read.": "NASCA로 암호화된 파일은 읽을 수 없습니다.",
+	"Search the workspace": "워크스페이스 검색",
+	"More results were found — refine your search": "결과가 더 있습니다 — 검색어를 좁혀보세요"
 }

@@ -2,6 +2,7 @@
 	import { getContext, afterUpdate } from 'svelte';
 	import { tick } from 'svelte';
 	import Folder from '../../icons/Folder.svelte';
+	import Search from '../../icons/Search.svelte';
 	import NewFolderAlt from '../../icons/NewFolderAlt.svelte';
 	import FilePlusAlt from '../../icons/FilePlusAlt.svelte';
 	import Spinner from '../../common/Spinner.svelte';
@@ -18,6 +19,7 @@
 	export let onNewFolder: () => void = () => {};
 	export let onNewFile: () => void = () => {};
 	export let onRequestUpload: () => void = () => {};
+	export let onSearch: () => void = () => {};
 	export let onDownloadDir: () => void = () => {};
 	export let onMove: (source: string, destFolder: string) => void = () => {};
 	export let onEditPath: () => void = () => {};
@@ -166,6 +168,15 @@
 	</Tooltip>
 
 	{#if !selectedFile}
+		<Tooltip content={$i18n.t('Search')}>
+			<button
+				class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+				on:click={onSearch}
+				aria-label={$i18n.t('Search')}
+			>
+				<Search className="size-3.5" />
+			</button>
+		</Tooltip>
 		<Tooltip content={$i18n.t('New Folder')}>
 			<button
 				class="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
