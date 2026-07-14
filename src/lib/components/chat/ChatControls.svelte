@@ -385,7 +385,7 @@
 											: 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}"
 										on:click={() => (activeTab = 'tool_results')}
 									>
-										{$i18n.t('Tool Results')}
+										{$i18n.t('Search Results')}
 									</button>
 								{/if}
 							</div>
@@ -549,7 +549,7 @@
 												: 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}"
 											on:click={() => (activeTab = 'tool_results')}
 										>
-											{$i18n.t('Tool Results')}
+											{$i18n.t('Search Results')}
 										</button>
 									{/if}
 								</div>

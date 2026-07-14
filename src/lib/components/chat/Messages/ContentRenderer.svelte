@@ -15,6 +15,8 @@
 	import FloatingButtons from '../ContentRenderer/FloatingButtons.svelte';
 	import { createMessagesList } from '$lib/utils';
 
+	import { ingestToolExplorerBlocks } from '$lib/utils/toolExplorer';
+
 	export let id;
 	export let content;
 
@@ -38,6 +40,36 @@
 	export let onSourceClick = (e) => {};
 	export let onTaskClick = (e) => {};
 	export let onAddMessages = (e) => {};
+
+	// Live Tool Results ingestion from the raw content — see utils/toolExplorer.
+	// Gated on the count of closed </details> tags (plain or HTML-encoded) so
+	// the full regex scan runs once per completed block, not per token delta.
+	// Doneness comes from history (the real message state): the `done` render
+	// prop is `true` during streaming when chatFadeStreamingText is disabled,
+	// which would permanently suppress the auto-focus.
+	let _detailsCloseCount = -1;
+	// A message counts as "live" if this component ever saw it streaming
+	// (history done === false). The pipe emits the search_results_button block
+	// at the very END of the message — the moment done flips true — so a
+	// strict streaming-only gate can never pass; live-marking lets the focus
+	// fire for the just-finished turn while old-chat mounts (never streaming
+	// in view, and dedup'd against the loadChat bulk populate) stay silent.
+	let _sawStreaming = false;
+	$: if (history?.messages?.[messageId]?.done === false) {
+		_sawStreaming = true;
+	}
+	$: if (content && messageId) {
+		const n =
+			content.split('</details>').length + content.split('&lt;/details&gt;').length;
+		if (n !== _detailsCloseCount) {
+			_detailsCloseCount = n;
+			if (n > 2) {
+				const historyDone = history?.messages?.[messageId]?.done;
+				const messageDone = _sawStreaming ? false : (historyDone ?? done);
+				ingestToolExplorerBlocks(content, { turnId: messageId, done: messageDone });
+			}
+		}
+	}
 
 	let contentContainerElement;
 	let floatingButtonsElement;

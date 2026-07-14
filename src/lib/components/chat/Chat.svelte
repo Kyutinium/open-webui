@@ -645,6 +645,7 @@
 						// Merge with existing store data so prior turns are preserved.
 						const existing = get(toolExplorerData) || {};
 						const next: Record<string, any[]> = { ...existing };
+						let addedNewCalls = false;
 						for (const [key, calls] of Object.entries(merged)) {
 							if (!next[key]) next[key] = [];
 							for (const call of calls) {
@@ -654,15 +655,25 @@
 										c.query === call.query &&
 										c.results?.length === call.results?.length
 								);
-								if (!isDup) next[key] = [...next[key], call];
+								if (!isDup) {
+									next[key] = [...next[key], call];
+									addedNewCalls = true;
+								}
 							}
 						}
 						toolExplorerData.set(next);
-						// Populate the Tool Results tab but DON'T auto-switch to it — that
-						// stole focus from the Files/Controls tab mid-response. The tab
-						// appears (data is set) and the user opens it when they want; the
-						// per-message panel-open below still surfaces it once.
-						if (!message._controlsOpened) {
+						// Focus the Search Results tab ONCE per message when new
+						// results land (further results in the same turn update it
+						// silently, and switching away manually is respected). This
+						// is the live populator — it runs on the streaming socket
+						// events, so it is the reliable place for the one-shot
+						// focus. The blanket auto-switch removed earlier stole
+						// focus on every stream update; the once-per-message gate
+						// prevents that.
+						if (addedNewCalls && !message._searchResultsFocused) {
+							message._searchResultsFocused = true;
+							showToolExplorer.set(true);
+						} else if (!message._controlsOpened) {
 							message._controlsOpened = true;
 							showControls.set(true);
 						}
