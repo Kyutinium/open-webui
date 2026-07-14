@@ -29,6 +29,15 @@
 				<span class="truncate text-[13px] max-w-[100px] sm:max-w-[150px]"
 					>{$i18n.t('File Manager')}</span
 				>
+				<!-- Connected indicator light -->
+				<span class="relative flex size-1.5 shrink-0">
+					<span
+						class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"
+					></span>
+					<span
+						class="relative inline-flex size-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"
+					></span>
+				</span>
 			</div>
 		</Tooltip>
 	{/if}
