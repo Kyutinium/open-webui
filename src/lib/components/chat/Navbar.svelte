@@ -293,7 +293,7 @@
 						/>
 					{/if}
 
-					{#each $banners.filter((b) => ![...JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]'), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
+					{#each $banners.filter((b) => b.type !== 'popup' && ![...JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]'), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
 						<Banner
 							{banner}
 							on:dismiss={(e) => {
