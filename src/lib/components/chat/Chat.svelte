@@ -69,6 +69,7 @@
 		displayFileHandler
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
+	import { buildAskUserQuestionDetails } from '$lib/utils/askUserQuestion';
 
 	import {
 		archiveChatById,
@@ -2108,44 +2109,10 @@
 						(item: any) => item?.type === 'function_call'
 					);
 					if (fc) {
-						let args: any = {};
-						try {
-							args = JSON.parse(fc.arguments ?? '{}') ?? {};
-						} catch {
-							args = {};
-						}
-						const rawList = Array.isArray(args.questions) ? args.questions : [args];
-						const questions = rawList
-							.filter((q: any) => q && typeof q === 'object')
-							.map((q: any) => ({
-								question: q.question ?? q.prompt ?? '',
-								options: Array.isArray(q.options)
-									? q.options
-											.map((opt: any) =>
-												typeof opt === 'string'
-													? { label: opt, description: '' }
-													: { label: opt?.label ?? '', description: opt?.description ?? '' }
-											)
-											.filter((opt: any) => opt.label)
-									: [],
-								multiSelect: !!q.multiSelect
-							}));
-						const body = {
-							callId: fc.call_id ?? '',
-							name: fc.name ?? 'AskUserQuestion',
-							previousResponseId: respObj.id ?? undefined,
-							questions,
-							raw: questions.some((q: any) => q.question) ? undefined : args
-						};
-						const summary =
-							fc.name === 'AskUserQuestion'
-								? '❓ 추가 입력이 필요합니다'
-								: `❓ 권한/입력 요청: ${fc.name ?? ''}`;
-						responseMessage.content +=
-							`\n\n<details type="ask_user_question" done="true">\n` +
-							`<summary>${summary}</summary>\n` +
-							`${JSON.stringify(body)}\n` +
-							`</details>\n\n`;
+						responseMessage.content += buildAskUserQuestionDetails(
+							fc,
+							respObj.id ?? undefined
+						);
 						history.messages[responseMessageId] = responseMessage;
 						history = history;
 					}
@@ -2226,7 +2193,12 @@
 			scrollToBottom();
 		}
 
-		// Persist to backend so refresh keeps the continuation visible.
+		// Persist to backend so refresh keeps the continuation visible.  The
+		// AUQ relay bypasses the chat completion channel, so nothing saves
+		// this message server-side unless we do it here.
+		await saveChatHandler(_chatId, history);
+
+		// Refresh the sidebar chat list.
 		chatCompletedHandler(
 			_chatId,
 			modelId,

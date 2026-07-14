@@ -1,12 +1,12 @@
 """
 title: Oh My Gateway
 author: claude-code-openai-wrapper
-version: 0.3.0
+version: 0.4.0
 description: .
     Oh My Gateway pipe connecting Open WebUI to the oh-my-gateway
     ``/v1/responses`` API. Derived from the stable
-    ``chatdragon_responses_wo_userquestions`` variant (no AskUserQuestion
-    cards) with two fixes:
+    ``chatdragon_responses_wo_userquestions`` variant, plus two fixes and
+    the interactive AskUserQuestion card flow:
 
     1. Native reasoning passthrough — the gateway emits Claude extended
        thinking as ``response.reasoning_text.delta`` events. Earlier
@@ -22,15 +22,22 @@ description: .
        (``UnsupportedContinuationPolicy``). This pipe sends ``allowed_tools``
        only when starting a new session and skips it on continuations.
 
+    3. AskUserQuestion cards — when the gateway pauses a turn with
+       ``status=requires_action`` (an ``AskUserQuestion`` function_call,
+       e.g. a clarifying question or a sensitive-file permission prompt),
+       this pipe emits a ``<details type="ask_user_question">`` block that
+       Open WebUI renders as an interactive card. The user's answer is
+       posted straight to the gateway via ``/api/v1/auq/answer`` (which
+       replays it as a ``function_call_output`` with ``previous_response_id``
+       to resume the paused session) — it does not flow back through this
+       pipe.
+
     Other features are inherited unchanged:
     - Session-aware via previous_response_id (with task-chain skip
       and 409 stale recovery so multi-turn never ``Stale...``)
     - User context injection (mlm_username from email ID)
     - Credential forwarding for MCP authentication
     - thought_wrapped mode
-
-    Like the variant it derives from, this pipe does NOT surface
-    AskUserQuestion / sensitive-file permission prompts as cards.
 license: MIT
 """
 
@@ -872,8 +879,17 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             if mcp_tools and isinstance(mcp_tools, list):
                 # "Task" lets the orchestrator spawn subagents — required for
                 # the subagent grouping UI to have anything to group.
+                # "AskUserQuestion" is listed defensively. allowed_tools is a
+                # permission allow-list, not an availability filter, and the
+                # gateway intercepts AskUserQuestion with a PreToolUse hook that
+                # runs before the allow/deny rules — so under the default
+                # permission mode the card flow already fires even without this
+                # entry. Listing it follows Anthropic's guidance and keeps it
+                # working if the gateway ever runs under a restrictive mode
+                # (e.g. dontAsk), where an unlisted tool would be denied.
                 base_tools = [
-                    "Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill", "Task",
+                    "Read", "Glob", "Grep", "Bash", "Write", "Edit", "Skill",
+                    "Task", "AskUserQuestion",
                 ]
                 payload["allowed_tools"] = base_tools + mcp_tools
                 log.info("[PIPE] allowed_tools (new session): %s", payload["allowed_tools"])
@@ -967,14 +983,64 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             if resp_id and chat_id and not task:
                                 self._response_ids[chat_id] = resp_id
                                 log.info("[PIPE] saved response_id=%s for chat=%s", resp_id, chat_id)
-                            # Note: this pipe variant intentionally does
-                            # not surface ``status=requires_action`` as a
-                            # card.  AskUserQuestion / sensitive-file
-                            # prompts therefore stall the model silently
-                            # — that is the trade-off this variant makes
-                            # for stability.  Switch to the regular
-                            # ``chatdragon_responses`` pipe to get the
-                            # interactive card flow.
+                            # NOTE on AskUserQuestion continuity: when this turn
+                            # ends with status=requires_action (a card), the
+                            # user's answer is relayed to the gateway *directly*
+                            # by ``/api/v1/auq/answer`` — it never flows back
+                            # through this pipe — so the pipe cannot observe the
+                            # resumed response's id. ``self._response_ids`` is
+                            # therefore left pointing at the requires_action
+                            # response. The first normal turn after an answer
+                            # then sends a now-stale previous_response_id and
+                            # gets a 409, which ``_open_responses_stream``
+                            # transparently recovers by adopting the latest id
+                            # from the error body. Cost: one extra request on
+                            # that first post-answer turn only; no context loss.
+                            # (A tighter fix would require sharing the resumed
+                            # id across the pipe/relay process boundary — not
+                            # possible while this runs as a standalone
+                            # Pipelines-container manifold — so the self-heal is
+                            # the deployment-agnostic behaviour.)
+
+                            # Detect AskUserQuestion (requires_action). The
+                            # gateway/SDK surfaces permission prompts and
+                            # explicit AskUserQuestion calls as a function_call
+                            # output item with status="requires_action". We
+                            # render the card but do not track per-chat pending
+                            # state here — the user's reply goes straight to the
+                            # gateway via ``/api/v1/auq/answer``.
+                            if resp_obj.get("status") == "requires_action":
+                                fc_item = None
+                                for item in resp_obj.get("output", []):
+                                    if (
+                                        isinstance(item, dict)
+                                        and item.get("type") == "function_call"
+                                    ):
+                                        fc_item = item
+                                        break
+                                if fc_item:
+                                    log.info(
+                                        "[PIPE] requires_action name=%s call_id=%s for chat=%s",
+                                        fc_item.get("name", ""),
+                                        fc_item.get("call_id", ""),
+                                        chat_id,
+                                    )
+                                    # ``resp_id`` is the response_id the gateway
+                                    # just returned for this turn — the frontend
+                                    # card echoes it back to ``/api/v1/auq/answer``
+                                    # so the gateway can locate the paused session.
+                                    rendered = self._render_ask_user_question(
+                                        fc_item,
+                                        previous_response_id=resp_id or None,
+                                    )
+                                    if rendered:
+                                        if thought_wrapped and not response_tag_sent:
+                                            if text_buffer:
+                                                yield text_buffer
+                                                text_buffer = ""
+                                            yield "\n</thought>\n\n"
+                                            response_tag_sent = True
+                                        yield rendered
                             continue
 
                         if event_type == "response.failed":
@@ -1331,6 +1397,106 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     current=match["current"],
                     base_url=match["base_url"],
                 )
+
+    def _render_ask_user_question(
+        self,
+        fc_item: dict,
+        previous_response_id: Optional[str] = None,
+    ) -> str:
+        """Render an AskUserQuestion function_call for Open WebUI.
+
+        Emits a ``<details type="ask_user_question">`` block. The Svelte
+        token dispatcher (``MarkdownTokens.svelte``) intercepts this and
+        renders an interactive ``AskUserQuestionCard`` with clickable
+        options. Falls back to readable markdown if the body fails to
+        parse on the frontend.
+
+        The body JSON adds ``previousResponseId`` so the card can submit
+        the user's answer to the dedicated ``/api/v1/auq/answer`` backend
+        relay without going through the chat-completion channel::
+
+          {"callId": "...",
+           "name": "AskUserQuestion",
+           "previousResponseId": "resp_<uuid>_<turn>",
+           "questions": [{"question": "...",
+                          "options": [{"label": "...", "description": "..."}],
+                          "multiSelect": false}]}
+        """
+        name = fc_item.get("name", "AskUserQuestion")
+        call_id = fc_item.get("call_id", "")
+        try:
+            args = json.loads(fc_item.get("arguments", "{}") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+
+        questions_list = args.get("questions")
+        if isinstance(questions_list, list) and questions_list:
+            raw_items = questions_list
+        else:
+            raw_items = [args]
+
+        normalized: list = []
+        for q in raw_items:
+            if not isinstance(q, dict):
+                continue
+            question_text = q.get("question") or q.get("prompt") or ""
+            options_raw = q.get("options")
+            options: list = []
+            if isinstance(options_raw, list):
+                for opt in options_raw:
+                    if isinstance(opt, dict):
+                        label = opt.get("label", "")
+                        desc = opt.get("description", "")
+                    else:
+                        label = str(opt)
+                        desc = ""
+                    if label:
+                        options.append({"label": label, "description": desc})
+            normalized.append({
+                "question": question_text,
+                "options": options,
+                "multiSelect": bool(q.get("multiSelect")),
+            })
+
+        # Drop completely empty entries (no question text and no options) —
+        # except when they are the only item (permission prompts may carry
+        # the payload under unknown keys; we surface the raw args then).
+        if any(q.get("question") or q.get("options") for q in normalized):
+            normalized = [
+                q for q in normalized
+                if q.get("question") or q.get("options")
+            ]
+
+        body = {
+            "callId": call_id,
+            "name": name,
+            "previousResponseId": previous_response_id,
+            "questions": normalized,
+            "raw": args if not normalized or not any(
+                q.get("question") for q in normalized
+            ) else None,
+        }
+        # Drop None values for a clean payload
+        body = {k: v for k, v in body.items() if v is not None}
+
+        body_json = json.dumps(body, ensure_ascii=False)
+
+        if name == "AskUserQuestion":
+            summary = "❓ 추가 입력이 필요합니다"
+        else:
+            summary = f"❓ 권한/입력 요청: {name}"
+
+        # Wrap in <details> so Open WebUI's MarkdownTokens.svelte can
+        # dispatch on attributes.type. The body is JSON; the Svelte side
+        # strips <summary> and JSON.parse()s the rest. ``done="true"`` keeps
+        # the card interactive once the message stream finishes.
+        return (
+            "\n\n"
+            f'<details type="ask_user_question" done="true">\n'
+            f"<summary>{summary}</summary>\n"
+            f"{body_json}\n"
+            "</details>\n\n"
+        )
 
     def _render_system_event(
         self,
