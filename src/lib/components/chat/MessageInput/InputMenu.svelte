@@ -36,6 +36,10 @@
 	export let fileUploadCapableModels: string[] = [];
 
 	export let screenCaptureHandler: Function;
+
+	// Hidden menu entries — flip back to true to restore.
+	const showAttachWebpage = false;
+	const showAttachKnowledge = false;
 	export let uploadFilesHandler: Function;
 	export let inputFilesHandler: Function;
 
@@ -185,6 +189,7 @@
 						</button>
 					</Tooltip>
 
+{#if showAttachWebpage}
 					<Tooltip
 						content={!webUploadEnabled
 							? $i18n.t('You do not have permission to upload web content.')
@@ -207,6 +212,7 @@
 							<div class="line-clamp-1">{$i18n.t('Attach Webpage')}</div>
 						</button>
 					</Tooltip>
+{/if}
 
 					<Tooltip
 						content={fileUploadCapableModels.length !== selectedModels.length
@@ -272,6 +278,7 @@
 						</Tooltip>
 					{/if}
 
+{#if showAttachKnowledge}
 					<Tooltip
 						content={fileUploadCapableModels.length !== selectedModels.length
 							? $i18n.t('Model(s) do not support file upload')
@@ -301,6 +308,7 @@
 							</div>
 						</button>
 					</Tooltip>
+{/if}
 
 					<Tooltip
 						content={fileUploadCapableModels.length !== selectedModels.length

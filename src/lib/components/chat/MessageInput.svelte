@@ -457,6 +457,12 @@
 	let filesInputElement;
 	let commandsElement;
 
+	// "Upload Files" opens a drag-and-drop guide instead of the OS file picker
+	// (some environments block the native dialog). Dropping onto the overlay
+	// routes through the same inputFilesHandler as the hidden file input.
+	let showDropZoneGuide = false;
+	let dropZoneDragOver = false;
+
 	let inputFiles;
 
 	let showInputModal = false;
@@ -1142,6 +1148,65 @@
 	});
 </script>
 
+{#if showDropZoneGuide}
+	<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+	<div
+		class="fixed inset-0 z-[9999] flex items-center justify-center p-6 bg-white/90 dark:bg-gray-850/90 backdrop-blur-sm"
+		on:click|self={() => (showDropZoneGuide = false)}
+		on:dragover|preventDefault={() => (dropZoneDragOver = true)}
+		on:dragleave={() => (dropZoneDragOver = false)}
+		on:drop|preventDefault={(e) => {
+			dropZoneDragOver = false;
+			showDropZoneGuide = false;
+			const dropped = Array.from(e.dataTransfer?.files ?? []);
+			if (dropped.length) {
+				inputFilesHandler(dropped);
+			}
+		}}
+	>
+		<div
+			class="relative w-full max-w-2xl h-72 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed transition {dropZoneDragOver
+				? 'border-blue-400 dark:border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
+				: 'border-gray-300 dark:border-gray-600'}"
+		>
+			<button
+				class="absolute top-3 right-3 p-1 rounded-lg text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+				on:click={() => (showDropZoneGuide = false)}
+				aria-label={$i18n.t('Close')}
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-5">
+					<path
+						d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"
+					/>
+				</svg>
+			</button>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.5"
+				class="size-8 text-gray-400 dark:text-gray-500"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+				/>
+			</svg>
+			<div class="text-base font-medium text-gray-700 dark:text-gray-200">
+				{$i18n.t('Drag and drop files here to upload')}
+			</div>
+			<div class="text-xs text-gray-400 dark:text-gray-500">
+				{$i18n.t('Files will be attached to your message')}
+			</div>
+			<div class="text-xs text-amber-600 dark:text-amber-400">
+				{$i18n.t('NASCA-encrypted files cannot be read.')}
+			</div>
+		</div>
+	</div>
+{/if}
+
 <ToolServersModal bind:show={showTools} {selectedToolIds} />
 
 <InputVariablesModal
@@ -1638,7 +1703,7 @@
 										{screenCaptureHandler}
 										{inputFilesHandler}
 										uploadFilesHandler={() => {
-											filesInputElement.click();
+											showDropZoneGuide = true;
 										}}
 										uploadGoogleDriveHandler={async () => {
 											try {

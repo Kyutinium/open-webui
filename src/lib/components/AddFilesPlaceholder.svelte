@@ -24,4 +24,8 @@
 			{/if}
 		</div>
 	</slot>
+
+	<div class="px-2 mt-1.5 text-center text-sm text-amber-600 dark:text-amber-400 w-full">
+		{$i18n.t('NASCA-encrypted files cannot be read.')}
+	</div>
 </div>
