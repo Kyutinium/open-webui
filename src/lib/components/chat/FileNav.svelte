@@ -193,6 +193,9 @@
 		fileContent !== null && fileImageUrl === null && filePdfData === null && !isOfficeFile;
 
 	// ── Upload / folder creation ─────────────────────────────────────────
+	// Upload affordances (button, drop zone, drag handling) are hidden unless
+	// the deployment opts in — see ENABLE_FILE_UPLOAD_UI in backend env.py.
+	$: uploadUiEnabled = $config?.features?.enable_file_upload_ui ?? false;
 	let isDragOver = false;
 	let uploading = false;
 	// Drag-and-drop upload zone, opened from the toolbar's upload button. Some
@@ -737,6 +740,7 @@
 
 	// ── Drag-and-drop upload ─────────────────────────────────────────────
 	const handleDragOver = (e: DragEvent) => {
+		if (!uploadUiEnabled) return;
 		if (selectedFile) return;
 		if (!e.dataTransfer?.types.includes('Files')) return;
 		e.preventDefault();
@@ -756,6 +760,7 @@
 		e.preventDefault();
 		e.stopPropagation();
 		isDragOver = false;
+		if (!uploadUiEnabled) return;
 
 		const terminal = selectedTerminal;
 		if (selectedFile || !terminal) {
@@ -1317,6 +1322,7 @@
 				onNewFolder={startNewFolder}
 				onNewFile={startNewFile}
 				onRequestUpload={openUploadZone}
+				showUpload={uploadUiEnabled}
 				onSearch={openSearch}
 				onDownloadDir={() => downloadFile(currentPath)}
 				onMove={handleMove}

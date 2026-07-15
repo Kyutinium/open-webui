@@ -246,6 +246,12 @@ try:
 except Exception:
     FILE_NAV_REFRESH_INTERVAL = 10.0
 
+# Show file-upload UI (chat "Upload Files" menu, FileNav upload button and
+# drag-and-drop zones). Defaults to hidden: in locked-down deployments the
+# browser/DLP layer blocks file drops entirely, and dead upload affordances
+# only confuse users. Set to 'true' where uploads actually work.
+ENABLE_FILE_UPLOAD_UI = os.environ.get('ENABLE_FILE_UPLOAD_UI', 'false').lower() == 'true'
+
 # Header names for user info forwarding (customizable via environment variables)
 FORWARD_USER_INFO_HEADER_USER_NAME = os.environ.get('FORWARD_USER_INFO_HEADER_USER_NAME', 'X-OpenWebUI-User-Name')
 FORWARD_USER_INFO_HEADER_USER_ID = os.environ.get('FORWARD_USER_INFO_HEADER_USER_ID', 'X-OpenWebUI-User-Id')

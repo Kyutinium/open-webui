@@ -905,7 +905,7 @@
 			}
 		}
 
-		if (e.dataTransfer?.files) {
+		if (($config?.features?.enable_file_upload_ui ?? false) && e.dataTransfer?.files) {
 			const inputFiles = Array.from(e.dataTransfer?.files);
 			if (inputFiles && inputFiles.length > 0) {
 				console.log(inputFiles);
