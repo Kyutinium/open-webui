@@ -836,6 +836,11 @@
 
 	const onDragOver = (e: DragEvent) => {
 		e.preventDefault();
+		// Resolve the cursor in the capture phase: without an explicit
+		// dropEffect the browser defaults to not-allowed when 'Files' is
+		// absent from dataTransfer.types (DLP wrappers), and FileNav's
+		// target-phase dropEffect="copy" arrives too late to override it.
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
 
 		// Tool result drag from sidebar — don't show file drop overlay
 		if (e.dataTransfer?.types?.includes('application/x-tool-result')) {
