@@ -736,9 +736,27 @@
 	};
 
 	// ── Drag-and-drop upload ─────────────────────────────────────────────
+	// Lenient file-drag detection: some drag sources (secured corporate
+	// explorers, DLP wrappers) don't expose 'Files' — or expose it in a
+	// different case — during dragover, only at drop time.
+	const dragHasFiles = (e: DragEvent) => {
+		const types = e.dataTransfer?.types;
+		return !!types && Array.from(types).some((t) => String(t).toLowerCase() === 'files');
+	};
+
 	const handleDragOver = (e: DragEvent) => {
+		// While the upload zone is open the user's intent is explicit — accept
+		// the drag unconditionally. Rejecting here (no preventDefault) makes the
+		// browser show a not-allowed cursor and swallow the drop entirely.
+		if (showUploadZone) {
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+			isDragOver = true;
+			return;
+		}
 		if (selectedFile) return;
-		if (!e.dataTransfer?.types.includes('Files')) return;
+		if (!dragHasFiles(e)) return;
 		e.preventDefault();
 		e.stopPropagation();
 		isDragOver = true;
@@ -758,7 +776,7 @@
 		isDragOver = false;
 
 		const terminal = selectedTerminal;
-		if (selectedFile || !terminal) {
+		if (!terminal || (selectedFile && !showUploadZone)) {
 			showUploadZone = false;
 			return;
 		}
@@ -766,6 +784,10 @@
 		const droppedFiles = Array.from(e.dataTransfer?.files ?? []);
 		if (!droppedFiles.length) {
 			showUploadZone = false;
+			// The drag source handed over no readable files (e.g. a secured
+			// explorer that blocks file extraction) — say so instead of
+			// silently closing the zone.
+			toast.error($i18n.t('No files could be read from the dropped items.'));
 			return;
 		}
 
@@ -1170,6 +1192,7 @@
 	<div
 		bind:this={containerEl}
 		class="flex flex-col h-full min-h-0 min-w-0 relative"
+		on:dragenter={handleDragOver}
 		on:dragover={handleDragOver}
 		on:dragleave={() => (isDragOver = false)}
 		on:drop={handleDrop}
