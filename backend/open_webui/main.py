@@ -414,6 +414,7 @@ from open_webui.config import (
     ENABLE_USER_STATUS,
     ENABLE_COMMUNITY_SHARING,
     ENABLE_MESSAGE_RATING,
+    ENABLE_CONTEXT_USAGE,
     ENABLE_USER_WEBHOOKS,
     ENABLE_EVALUATION_ARENA_MODELS,
     BYPASS_ADMIN_ACCESS_CONTROL,
@@ -949,6 +950,7 @@ app.state.config.ENABLE_CALENDAR = ENABLE_CALENDAR
 app.state.config.ENABLE_NOTES = ENABLE_NOTES
 app.state.config.ENABLE_COMMUNITY_SHARING = ENABLE_COMMUNITY_SHARING
 app.state.config.ENABLE_MESSAGE_RATING = ENABLE_MESSAGE_RATING
+app.state.config.ENABLE_CONTEXT_USAGE = ENABLE_CONTEXT_USAGE
 app.state.config.ENABLE_USER_WEBHOOKS = ENABLE_USER_WEBHOOKS
 app.state.config.ENABLE_USER_STATUS = ENABLE_USER_STATUS
 
@@ -2283,6 +2285,7 @@ async def get_app_config(request: Request):
                     'enable_autocomplete_generation': app.state.config.ENABLE_AUTOCOMPLETE_GENERATION,
                     'enable_community_sharing': app.state.config.ENABLE_COMMUNITY_SHARING,
                     'enable_message_rating': app.state.config.ENABLE_MESSAGE_RATING,
+                    'enable_context_usage': app.state.config.ENABLE_CONTEXT_USAGE,
                     'enable_user_webhooks': app.state.config.ENABLE_USER_WEBHOOKS,
                     'enable_user_status': app.state.config.ENABLE_USER_STATUS,
                     'enable_admin_export': ENABLE_ADMIN_EXPORT,

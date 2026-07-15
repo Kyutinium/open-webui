@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 
+	import { config } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	const i18n = getContext('i18n');
@@ -51,7 +52,8 @@
 	const fmtK = (n: number) => `${Math.max(1, Math.round(n / 1000))}k`;
 </script>
 
-{#if usage}
+<!-- Admin-togglable: Admin Settings > General > Show Context Usage -->
+{#if usage && ($config?.features?.enable_context_usage ?? true)}
 	<Tooltip content={$i18n.t('Context usage')} placement="top">
 		<div
 			class="flex items-center gap-1.5 translate-y-[1px] text-sm rounded-lg px-2 py-1 cursor-default"

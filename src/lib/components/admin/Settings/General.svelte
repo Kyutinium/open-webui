@@ -809,6 +809,14 @@
 
 					<div class="mb-2.5 flex w-full items-center justify-between pr-2">
 						<div class=" self-center text-xs font-medium">
+							{$i18n.t('Show Context Usage')}
+						</div>
+
+						<Switch bind:state={adminConfig.ENABLE_CONTEXT_USAGE} />
+					</div>
+
+					<div class="mb-2.5 flex w-full items-center justify-between pr-2">
+						<div class=" self-center text-xs font-medium">
 							{$i18n.t('Folders')}
 						</div>
 
