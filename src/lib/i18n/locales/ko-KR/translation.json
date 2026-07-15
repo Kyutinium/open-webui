@@ -2290,5 +2290,6 @@
 	"NASCA-encrypted files cannot be read.": "NASCA로 암호화된 파일은 읽을 수 없습니다.",
 	"Search the workspace": "워크스페이스 검색",
 	"More results were found — refine your search": "결과가 더 있습니다 — 검색어를 좁혀보세요",
-	"File Manager": "파일 관리자"
+	"File Manager": "파일 관리자",
+	"Context usage": "컨텍스트 사용량"
 }

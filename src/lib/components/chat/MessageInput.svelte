@@ -88,6 +88,7 @@
 	import Terminal from '../icons/Terminal.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
+	import ContextGauge from './MessageInput/ContextGauge.svelte';
 	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
@@ -2035,6 +2036,9 @@
 										{/if}
 
 										{#if !history?.currentId || history.messages[history.currentId]?.done == true}
+											<!-- Context window usage gauge -->
+											<ContextGauge {history} />
+
 											<!-- Terminal Server Selector -->
 											{@const hasDirectToolServerAccess =
 												$_user?.role === 'admin' ||
