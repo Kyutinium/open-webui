@@ -1,4 +1,4 @@
-"""add dept_index column to user table
+"""add d_index column to user table
 
 Revision ID: d1a2b3c4e5f6
 Revises: a1b2c3d4e5f7
@@ -22,8 +22,8 @@ def upgrade() -> None:
     # Nullable with no server default on purpose: rows that predate this column
     # stay NULL ("not resolved yet") so they can be filled in on the next login,
     # instead of being claimed as 0 ("belongs to none of the candidates").
-    op.add_column('user', sa.Column('dept_index', sa.Integer(), nullable=True))
+    op.add_column('user', sa.Column('d_index', sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column('user', 'dept_index')
+    op.drop_column('user', 'd_index')

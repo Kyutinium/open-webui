@@ -5,12 +5,12 @@ from open_webui.env import (
     FORWARD_USER_INFO_HEADER_USER_ID,
     FORWARD_USER_INFO_HEADER_USER_EMAIL,
     FORWARD_USER_INFO_HEADER_USER_ROLE,
-    FORWARD_USER_INFO_HEADER_USER_DEPT_INDEX,
+    FORWARD_USER_INFO_HEADER_USER_D_INDEX,
 )
 
 
 def include_user_info_headers(headers, user):
-    dept_index = getattr(user, 'dept_index', None)
+    d_index = getattr(user, 'd_index', None)
 
     return {
         **headers,
@@ -21,5 +21,5 @@ def include_user_info_headers(headers, user):
         # Left out entirely while the index is unresolved, so a receiver can tell
         # 'not resolved yet' (header absent) from 'belongs to no candidate
         # department' (0) without inventing a sentinel value.
-        **({FORWARD_USER_INFO_HEADER_USER_DEPT_INDEX: str(dept_index)} if dept_index is not None else {}),
+        **({FORWARD_USER_INFO_HEADER_USER_D_INDEX: str(d_index)} if d_index is not None else {}),
     }

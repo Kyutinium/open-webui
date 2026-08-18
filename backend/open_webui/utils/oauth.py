@@ -39,8 +39,8 @@ from open_webui.config import (
     SSO_API_KEY,
     SSO_SYSTEM_ID,
     SSG_DEPT_CODES,
-    SSG_DEPT_INDEX_CODES,
-    SSG_DEPT_INDEX_REFRESH_ON_LOGIN,
+    SSG_D_INDEX_CODES,
+    SSG_D_INDEX_REFRESH_ON_LOGIN,
     SSO_LOGIN_ID_CLAIM,
     SSO_USER_ID_CLAIM,
     DEFAULT_USER_ROLE,
@@ -1024,8 +1024,8 @@ async def query_sso_dept_membership(user_data: dict, dept_codes: list) -> list:
     return results
 
 
-async def resolve_dept_index(user_data: dict) -> Optional[int]:
-    """Resolve the user's department index against SSG_DEPT_INDEX_CODES.
+async def resolve_d_index(user_data: dict) -> Optional[int]:
+    """Resolve the user's department index against SSG_D_INDEX_CODES.
 
     Each candidate code stands for exactly one department, so the index is the
     1-based position of the first code the user belongs to, and 0 when they
@@ -1033,10 +1033,10 @@ async def resolve_dept_index(user_data: dict) -> Optional[int]:
     (feature not configured, or every SSO request failed) so the caller leaves
     the stored value alone instead of writing a wrong 0.
     """
-    if not (SSO_API_URL and SSG_DEPT_INDEX_CODES):
+    if not (SSO_API_URL and SSG_D_INDEX_CODES):
         return None
 
-    results = await query_sso_dept_membership(user_data, SSG_DEPT_INDEX_CODES)
+    results = await query_sso_dept_membership(user_data, SSG_D_INDEX_CODES)
 
     for index, result in enumerate(results, start=1):
         if result == 'Y':
@@ -1654,11 +1654,11 @@ class OAuthManager:
             if user:
                 # Fill in the department index for users that predate the column, or
                 # re-resolve it when the deployment wants to follow department moves.
-                if user.dept_index is None or SSG_DEPT_INDEX_REFRESH_ON_LOGIN:
-                    dept_index = await resolve_dept_index(user_data)
-                    if dept_index is not None and dept_index != user.dept_index:
-                        await Users.update_user_by_id(user.id, {'dept_index': dept_index}, db=db)
-                        user.dept_index = dept_index
+                if user.d_index is None or SSG_D_INDEX_REFRESH_ON_LOGIN:
+                    d_index = await resolve_d_index(user_data)
+                    if d_index is not None and d_index != user.d_index:
+                        await Users.update_user_by_id(user.id, {'d_index': d_index}, db=db)
+                        user.d_index = d_index
 
                 determined_role = await self.get_user_role(user, user_data)
                 if user.role != determined_role:
@@ -1746,7 +1746,7 @@ class OAuthManager:
                         name = email
 
                     # Resolved against its own candidate list, and never an access gate.
-                    dept_index = await resolve_dept_index(user_data)
+                    d_index = await resolve_d_index(user_data)
 
                     user = await Auths.insert_new_auth(
                         email=email,
@@ -1761,9 +1761,9 @@ class OAuthManager:
                     if not user:
                         raise HTTPException(500, detail=ERROR_MESSAGES.CREATE_USER_ERROR)
 
-                    if dept_index is not None:
-                        await Users.update_user_by_id(user.id, {'dept_index': dept_index}, db=db)
-                        user.dept_index = dept_index
+                    if d_index is not None:
+                        await Users.update_user_by_id(user.id, {'d_index': d_index}, db=db)
+                        user.d_index = d_index
 
                     # Atomically check if this is the only user *after* the
                     # insert to avoid TOCTOU race on first-user registration.

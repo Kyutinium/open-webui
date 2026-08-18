@@ -135,18 +135,18 @@ Gateway의 Claude Code SDK와 Open WebUI를 연결하는 파이프라인.
 
 ---
 
-## 8. SSG Department Index
+## 8. SSG D Index (부서 index)
 
-로그인한 유저가 어느 부서에 속하는지를 `user.dept_index`에 저장하는 기능.
+로그인한 유저가 어느 부서에 속하는지를 `user.d_index`에 저장하는 기능.
 접근 권한 체크(`SSG_DEPT_CODES`)와는 **별개의 후보 리스트**를 사용한다 —
 권한 체크용 SSG 그룹 하나에는 여러 부서가 섞여 있을 수 있어서, index 판정에는
 "SSG 코드 1개 = 부서 1개"인 리스트를 따로 받는다.
 
 ### 환경변수
-- **`SSG_DEPT_INDEX_CODES`** (JSON 배열, 순서가 의미를 가짐) - 부서 후보 리스트.
-  유저가 속한 **첫 번째** 코드의 1-based 위치가 `dept_index`가 된다.
+- **`SSG_D_INDEX_CODES`** (JSON 배열, 순서가 의미를 가짐) - 부서 후보 리스트.
+  유저가 속한 **첫 번째** 코드의 1-based 위치가 `d_index`가 된다.
   순서를 바꾸면 이미 저장된 index의 의미도 바뀌므로 주의.
-- **`SSG_DEPT_INDEX_REFRESH_ON_LOGIN`** (기본 `false`) - `false`면 index를 한 번만
+- **`SSG_D_INDEX_REFRESH_ON_LOGIN`** (기본 `false`) - `false`면 index를 한 번만
   판정(신규 가입 시, 또는 컬럼 추가 후 첫 로그인)하고 이후 그대로 둔다. `true`면
   매 로그인마다 재판정한다 (로그인마다 후보 코드 수만큼 SSO 요청 발생).
 
@@ -156,36 +156,36 @@ Gateway의 Claude Code SDK와 Open WebUI를 연결하는 파이프라인.
 - `NULL` - 아직 판정 안 됨 (컬럼 추가 이전에 생성된 유저, 또는 SSO 요청이 전부 실패)
 
 ### Backend
-- **`backend/open_webui/migrations/versions/d1a2b3c4e5f6_add_dept_index_to_user_table.py`** (new)
-  - `user.dept_index` (Integer, nullable) 추가. server default 없이 nullable이라
+- **`backend/open_webui/migrations/versions/d1a2b3c4e5f6_add_d_index_to_user_table.py`** (new)
+  - `user.d_index` (Integer, nullable) 추가. server default 없이 nullable이라
     기존 행은 `NULL`로 남고, 다음 로그인 때 채워진다 (0으로 단정하지 않음)
-- **`backend/open_webui/models/users.py`** - `User.dept_index` 컬럼 + `UserModel.dept_index` 필드
-- **`backend/open_webui/config.py`** - `SSG_DEPT_INDEX_CODES`, `SSG_DEPT_INDEX_REFRESH_ON_LOGIN`
+- **`backend/open_webui/models/users.py`** - `User.d_index` 컬럼 + `UserModel.d_index` 필드
+- **`backend/open_webui/config.py`** - `SSG_D_INDEX_CODES`, `SSG_D_INDEX_REFRESH_ON_LOGIN`
 - **`backend/open_webui/utils/oauth.py`**
   - `query_sso_dept_membership(user_data, dept_codes)` - 기존 SSO 조회 루프를 헬퍼로 추출
     (권한 체크 블록도 이 헬퍼를 쓰도록 변경, 동작은 동일)
-  - `resolve_dept_index(user_data)` - `SSG_DEPT_INDEX_CODES` 기준 index 판정
-  - OAuth 콜백: 신규 유저는 생성 직후 저장, 기존 유저는 `dept_index`가 `NULL`일 때
+  - `resolve_d_index(user_data)` - `SSG_D_INDEX_CODES` 기준 index 판정
+  - OAuth 콜백: 신규 유저는 생성 직후 저장, 기존 유저는 `d_index`가 `NULL`일 때
     (또는 refresh 옵션이 켜져 있을 때) 판정해서 저장. index 판정은 절대 로그인을 막지 않는다
 
-### Gateway로 전달 (`X-OpenWebUI-User-Dept-Index`)
+### Gateway로 전달 (`X-OpenWebUI-User-D-Index`)
 
 `X-OpenWebUI-User-Id` 등과 같은 방식으로 헤더에 실어 보낸다. **미판정(`NULL`)이면
 헤더 자체를 붙이지 않는다** - 받는 쪽이 "아직 판정 안 됨"과 "어느 부서에도 안 속함(`0`)"을
 구분할 수 있게 하기 위함 (sentinel 값을 만들지 않는다).
 
-- **`backend/open_webui/env.py`** - `FORWARD_USER_INFO_HEADER_USER_DEPT_INDEX`
-  (기본 `X-OpenWebUI-User-Dept-Index`)
+- **`backend/open_webui/env.py`** - `FORWARD_USER_INFO_HEADER_USER_D_INDEX`
+  (기본 `X-OpenWebUI-User-D-Index`)
 - **`backend/open_webui/utils/headers.py`** - `include_user_info_headers()`에 추가.
   이 헬퍼가 유일한 choke point이므로 openai/ollama/terminals/retrieval/tools 등
   기존 forwarding 경로 전부가 자동으로 이 헤더를 함께 보낸다
   (기존 `ENABLE_FORWARD_USER_INFO_HEADERS` 플래그에 그대로 종속 - 기본값 `False`)
 - **`backend/open_webui/routers/openai.py`** - pipeline 모델용 `payload['user']`에
-  `dept_index` 추가. 이 dict는 화이트리스트라서 명시하지 않으면 pipe가 볼 수 없다.
+  `d_index` 추가. 이 dict는 화이트리스트라서 명시하지 않으면 pipe가 볼 수 없다.
   이 경로는 `ENABLE_FORWARD_USER_INFO_HEADERS`와 무관하게 항상 전달된다
 - **`pipelines_dev/*.py` (9개 pipe 전부)** - `extra_headers`에
-  `X-OpenWebUI-User-Dept-Index` 추가. `meta_headers`(core가 forward한 헤더)를 우선
-  보고, 없으면 `__user__["dept_index"]`로 fallback - 기존 `X-OpenWebUI-User-Name`
+  `X-OpenWebUI-User-D-Index` 추가. `meta_headers`(core가 forward한 헤더)를 우선
+  보고, 없으면 `__user__["d_index"]`로 fallback - 기존 `X-OpenWebUI-User-Name`
   블록과 동일한 패턴. `None`이면 헤더를 붙이지 않고, `0`은 그대로 보낸다
 
 ---

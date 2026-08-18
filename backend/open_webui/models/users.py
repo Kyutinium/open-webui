@@ -70,7 +70,7 @@ class User(Base):
 
     # 1-based position of the SSG candidate department the user belongs to
     # (0 = none of the candidates, NULL = not resolved yet).
-    dept_index = Column(Integer, nullable=True)
+    d_index = Column(Integer, nullable=True)
 
     last_active_at = Column(BigInteger)
     updated_at = Column(BigInteger)
@@ -105,7 +105,7 @@ class UserModel(BaseModel):
     oauth: Optional[dict] = None
     scim: Optional[dict] = None
 
-    dept_index: Optional[int] = None
+    d_index: Optional[int] = None
 
     last_active_at: int  # timestamp in epoch
     updated_at: int  # timestamp in epoch

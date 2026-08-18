@@ -698,12 +698,12 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         # Department index resolved by Open WebUI core: prefer the forwarded
         # header, fall back to the user payload. An absent header/None means
         # "not resolved yet"; 0 means "belongs to no candidate department".
-        dept_index = meta_headers.get("x-openwebui-user-dept-index", "")
-        if dept_index == "" and __user__:
-            raw_dept_index = __user__.get("dept_index")
-            dept_index = "" if raw_dept_index is None else str(raw_dept_index)
-        if dept_index != "":
-            extra_headers["X-OpenWebUI-User-Dept-Index"] = str(dept_index)
+        d_index = meta_headers.get("x-openwebui-user-d-index", "")
+        if d_index == "" and __user__:
+            raw_d_index = __user__.get("d_index")
+            d_index = "" if raw_d_index is None else str(raw_d_index)
+        if d_index != "":
+            extra_headers["X-OpenWebUI-User-D-Index"] = str(d_index)
 
         __cookies__ = body.get("cookies", {})
         if __cookies__ and not dscrowd_token:
