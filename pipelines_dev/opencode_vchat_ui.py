@@ -636,6 +636,16 @@ class Pipeline:
                 from urllib.parse import quote
                 extra_headers["X-OpenWebUI-User-Name"] = quote(owui_username)
 
+        # Department index resolved by Open WebUI core: prefer the forwarded
+        # header, fall back to the user payload. An absent header/None means
+        # "not resolved yet"; 0 means "belongs to no candidate department".
+        dept_index = meta_headers.get("x-openwebui-user-dept-index", "")
+        if dept_index == "" and __user__:
+            raw_dept_index = __user__.get("dept_index")
+            dept_index = "" if raw_dept_index is None else str(raw_dept_index)
+        if dept_index != "":
+            extra_headers["X-OpenWebUI-User-Dept-Index"] = str(dept_index)
+
         __cookies__ = body.get("cookies", {})
         if __cookies__ and not dscrowd_token:
             dscrowd_token = __cookies__.get("dscrowd.token_key", "")

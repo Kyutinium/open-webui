@@ -1106,6 +1106,7 @@ async def generate_chat_completion(
             'id': user.id,
             'email': user.email,
             'role': user.role,
+            'dept_index': getattr(user, 'dept_index', None),
         }
         if metadata:
             payload['metadata'] = metadata

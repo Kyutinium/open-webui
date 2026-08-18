@@ -168,6 +168,26 @@ Gateway의 Claude Code SDK와 Open WebUI를 연결하는 파이프라인.
   - OAuth 콜백: 신규 유저는 생성 직후 저장, 기존 유저는 `dept_index`가 `NULL`일 때
     (또는 refresh 옵션이 켜져 있을 때) 판정해서 저장. index 판정은 절대 로그인을 막지 않는다
 
+### Gateway로 전달 (`X-OpenWebUI-User-Dept-Index`)
+
+`X-OpenWebUI-User-Id` 등과 같은 방식으로 헤더에 실어 보낸다. **미판정(`NULL`)이면
+헤더 자체를 붙이지 않는다** - 받는 쪽이 "아직 판정 안 됨"과 "어느 부서에도 안 속함(`0`)"을
+구분할 수 있게 하기 위함 (sentinel 값을 만들지 않는다).
+
+- **`backend/open_webui/env.py`** - `FORWARD_USER_INFO_HEADER_USER_DEPT_INDEX`
+  (기본 `X-OpenWebUI-User-Dept-Index`)
+- **`backend/open_webui/utils/headers.py`** - `include_user_info_headers()`에 추가.
+  이 헬퍼가 유일한 choke point이므로 openai/ollama/terminals/retrieval/tools 등
+  기존 forwarding 경로 전부가 자동으로 이 헤더를 함께 보낸다
+  (기존 `ENABLE_FORWARD_USER_INFO_HEADERS` 플래그에 그대로 종속 - 기본값 `False`)
+- **`backend/open_webui/routers/openai.py`** - pipeline 모델용 `payload['user']`에
+  `dept_index` 추가. 이 dict는 화이트리스트라서 명시하지 않으면 pipe가 볼 수 없다.
+  이 경로는 `ENABLE_FORWARD_USER_INFO_HEADERS`와 무관하게 항상 전달된다
+- **`pipelines_dev/*.py` (9개 pipe 전부)** - `extra_headers`에
+  `X-OpenWebUI-User-Dept-Index` 추가. `meta_headers`(core가 forward한 헤더)를 우선
+  보고, 없으면 `__user__["dept_index"]`로 fallback - 기존 `X-OpenWebUI-User-Name`
+  블록과 동일한 패턴. `None`이면 헤더를 붙이지 않고, `0`은 그대로 보낸다
+
 ---
 
 ## 9. TODO / Future Work
