@@ -135,7 +135,42 @@ Gateway의 Claude Code SDK와 Open WebUI를 연결하는 파이프라인.
 
 ---
 
-## 8. TODO / Future Work
+## 8. SSG Department Index
+
+로그인한 유저가 어느 부서에 속하는지를 `user.dept_index`에 저장하는 기능.
+접근 권한 체크(`SSG_DEPT_CODES`)와는 **별개의 후보 리스트**를 사용한다 —
+권한 체크용 SSG 그룹 하나에는 여러 부서가 섞여 있을 수 있어서, index 판정에는
+"SSG 코드 1개 = 부서 1개"인 리스트를 따로 받는다.
+
+### 환경변수
+- **`SSG_DEPT_INDEX_CODES`** (JSON 배열, 순서가 의미를 가짐) - 부서 후보 리스트.
+  유저가 속한 **첫 번째** 코드의 1-based 위치가 `dept_index`가 된다.
+  순서를 바꾸면 이미 저장된 index의 의미도 바뀌므로 주의.
+- **`SSG_DEPT_INDEX_REFRESH_ON_LOGIN`** (기본 `false`) - `false`면 index를 한 번만
+  판정(신규 가입 시, 또는 컬럼 추가 후 첫 로그인)하고 이후 그대로 둔다. `true`면
+  매 로그인마다 재판정한다 (로그인마다 후보 코드 수만큼 SSO 요청 발생).
+
+### 저장 값
+- `1..N` - 후보 리스트의 N번째 부서에 속함
+- `0` - 후보 리스트 중 어디에도 속하지 않음
+- `NULL` - 아직 판정 안 됨 (컬럼 추가 이전에 생성된 유저, 또는 SSO 요청이 전부 실패)
+
+### Backend
+- **`backend/open_webui/migrations/versions/d1a2b3c4e5f6_add_dept_index_to_user_table.py`** (new)
+  - `user.dept_index` (Integer, nullable) 추가. server default 없이 nullable이라
+    기존 행은 `NULL`로 남고, 다음 로그인 때 채워진다 (0으로 단정하지 않음)
+- **`backend/open_webui/models/users.py`** - `User.dept_index` 컬럼 + `UserModel.dept_index` 필드
+- **`backend/open_webui/config.py`** - `SSG_DEPT_INDEX_CODES`, `SSG_DEPT_INDEX_REFRESH_ON_LOGIN`
+- **`backend/open_webui/utils/oauth.py`**
+  - `query_sso_dept_membership(user_data, dept_codes)` - 기존 SSO 조회 루프를 헬퍼로 추출
+    (권한 체크 블록도 이 헬퍼를 쓰도록 변경, 동작은 동일)
+  - `resolve_dept_index(user_data)` - `SSG_DEPT_INDEX_CODES` 기준 index 판정
+  - OAuth 콜백: 신규 유저는 생성 직후 저장, 기존 유저는 `dept_index`가 `NULL`일 때
+    (또는 refresh 옵션이 켜져 있을 때) 판정해서 저장. index 판정은 절대 로그인을 막지 않는다
+
+---
+
+## 9. TODO / Future Work
 
 - **Confluence 인증 통합**: dscrowd.token_key 쿠키 자동 획득
   - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성 → pipe에 전달

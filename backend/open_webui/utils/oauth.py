@@ -39,6 +39,8 @@ from open_webui.config import (
     SSO_API_KEY,
     SSO_SYSTEM_ID,
     SSG_DEPT_CODES,
+    SSG_DEPT_INDEX_CODES,
+    SSG_DEPT_INDEX_REFRESH_ON_LOGIN,
     SSO_LOGIN_ID_CLAIM,
     SSO_USER_ID_CLAIM,
     DEFAULT_USER_ROLE,
@@ -983,6 +985,69 @@ class OAuthClientManager:
         return response
 
 
+async def query_sso_dept_membership(user_data: dict, dept_codes: list) -> list:
+    """Ask the SSO service whether the user belongs to each of `dept_codes`.
+
+    Returns one entry per code, in the same order: the upper-cased response body
+    ('Y' / 'N'), or None when that request could not be answered.
+    """
+    login_id = user_data.get(SSO_LOGIN_ID_CLAIM, '')
+    user_epid = user_data.get(SSO_USER_ID_CLAIM, '')
+    sso_headers = {'x-dep-ticket': f'credential:{SSO_API_KEY}'}
+    common_params = {
+        'systemId': SSO_SYSTEM_ID,
+        'loginUser.login': login_id,
+        'userEpid': user_epid,
+    }
+
+    results = []
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        for dept_code in dept_codes:
+            params = {**common_params, 'deptCode': dept_code}
+            try:
+                async with session.get(
+                    SSO_API_URL,
+                    params=params,
+                    headers=sso_headers,
+                    ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                ) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        results.append(text.strip().upper())
+                    else:
+                        log.warning(f'SSO validation request failed for deptCode {dept_code}: status {resp.status}')
+                        results.append(None)
+            except Exception as e:
+                log.warning(f'SSO validation request failed for deptCode {dept_code}: {e}')
+                results.append(None)
+
+    return results
+
+
+async def resolve_dept_index(user_data: dict) -> Optional[int]:
+    """Resolve the user's department index against SSG_DEPT_INDEX_CODES.
+
+    Each candidate code stands for exactly one department, so the index is the
+    1-based position of the first code the user belongs to, and 0 when they
+    belong to none of them. Returns None when the index cannot be determined
+    (feature not configured, or every SSO request failed) so the caller leaves
+    the stored value alone instead of writing a wrong 0.
+    """
+    if not (SSO_API_URL and SSG_DEPT_INDEX_CODES):
+        return None
+
+    results = await query_sso_dept_membership(user_data, SSG_DEPT_INDEX_CODES)
+
+    for index, result in enumerate(results, start=1):
+        if result == 'Y':
+            return index
+
+    if all(result is None for result in results):
+        return None
+
+    return 0
+
+
 class OAuthManager:
     def __init__(self, app):
         self.oauth = OAuth()
@@ -1587,6 +1652,14 @@ class OAuthManager:
                         await Users.update_user_oauth_by_id(user.id, provider, sub, db=db)
 
             if user:
+                # Fill in the department index for users that predate the column, or
+                # re-resolve it when the deployment wants to follow department moves.
+                if user.dept_index is None or SSG_DEPT_INDEX_REFRESH_ON_LOGIN:
+                    dept_index = await resolve_dept_index(user_data)
+                    if dept_index is not None and dept_index != user.dept_index:
+                        await Users.update_user_by_id(user.id, {'dept_index': dept_index}, db=db)
+                        user.dept_index = dept_index
+
                 determined_role = await self.get_user_role(user, user_data)
                 if user.role != determined_role:
                     await Users.update_user_role_by_id(user.id, determined_role, db=db)
@@ -1641,37 +1714,7 @@ class OAuthManager:
             else:
                 # SSO department validation for new users
                 if SSO_API_URL and SSG_DEPT_CODES:
-                    login_id = user_data.get(SSO_LOGIN_ID_CLAIM, '')
-                    user_epid = user_data.get(SSO_USER_ID_CLAIM, '')
-                    sso_headers = {'x-dep-ticket': f'credential:{SSO_API_KEY}'}
-                    common_params = {
-                        'systemId': SSO_SYSTEM_ID,
-                        'loginUser.login': login_id,
-                        'userEpid': user_epid,
-                    }
-
-                    results = []
-                    async with aiohttp.ClientSession(trust_env=True) as session:
-                        for dept_code in SSG_DEPT_CODES:
-                            params = {**common_params, 'deptCode': dept_code}
-                            try:
-                                async with session.get(
-                                    SSO_API_URL,
-                                    params=params,
-                                    headers=sso_headers,
-                                    ssl=AIOHTTP_CLIENT_SESSION_SSL,
-                                ) as resp:
-                                    if resp.status == 200:
-                                        text = await resp.text()
-                                        results.append(text.strip().upper())
-                                    else:
-                                        log.warning(
-                                            f'SSO validation request failed for deptCode {dept_code}: status {resp.status}'
-                                        )
-                                        results.append(None)
-                            except Exception as e:
-                                log.warning(f'SSO validation request failed for deptCode {dept_code}: {e}')
-                                results.append(None)
+                    results = await query_sso_dept_membership(user_data, SSG_DEPT_CODES)
 
                     if all(result == 'N' for result in results if result is not None):
                         raise HTTPException(
@@ -1702,6 +1745,9 @@ class OAuthManager:
                         log.warning('Username claim is missing, using email as name')
                         name = email
 
+                    # Resolved against its own candidate list, and never an access gate.
+                    dept_index = await resolve_dept_index(user_data)
+
                     user = await Auths.insert_new_auth(
                         email=email,
                         password=get_password_hash(str(uuid.uuid4())),  # Random password, not used
@@ -1714,6 +1760,10 @@ class OAuthManager:
 
                     if not user:
                         raise HTTPException(500, detail=ERROR_MESSAGES.CREATE_USER_ERROR)
+
+                    if dept_index is not None:
+                        await Users.update_user_by_id(user.id, {'dept_index': dept_index}, db=db)
+                        user.dept_index = dept_index
 
                     # Atomically check if this is the only user *after* the
                     # insert to avoid TOCTOU race on first-user registration.

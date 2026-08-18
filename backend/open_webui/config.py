@@ -459,6 +459,30 @@ SSO_LOGIN_ID_CLAIM = os.environ.get('SSO_LOGIN_ID_CLAIM', 'loginid')
 SSO_USER_ID_CLAIM = os.environ.get('SSO_USER_ID_CLAIM', 'userid')
 
 ####################################
+# Department index config
+####################################
+
+# Separate from SSG_DEPT_CODES: that list is only an access gate and may mix
+# several departments inside one SSG group. This list is an ORDERED candidate
+# list where one SSG code means exactly one department, and a user's stored
+# `dept_index` is the 1-based position of the first code they belong to
+# (0 = none of them). Reordering it therefore renumbers already-stored indexes,
+# and this list never grants or denies access.
+_ssg_dept_index_codes_raw = os.environ.get('SSG_DEPT_INDEX_CODES', '[]')
+try:
+    SSG_DEPT_INDEX_CODES = json.loads(_ssg_dept_index_codes_raw)
+    if not isinstance(SSG_DEPT_INDEX_CODES, list):
+        SSG_DEPT_INDEX_CODES = []
+except (json.JSONDecodeError, TypeError):
+    SSG_DEPT_INDEX_CODES = []
+
+# An index is resolved once by default (at signup, or on the first login after
+# the column was added) and then left alone. Set this to re-resolve it on every
+# login - costs one SSO request per candidate code per login, but follows users
+# who move between departments.
+SSG_DEPT_INDEX_REFRESH_ON_LOGIN = os.environ.get('SSG_DEPT_INDEX_REFRESH_ON_LOGIN', 'False').lower() == 'true'
+
+####################################
 # OAuth config
 ####################################
 
