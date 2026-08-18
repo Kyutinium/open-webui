@@ -858,6 +858,31 @@ async def signout(request: Request, response: Response, db: AsyncSession = Depen
 ############################
 
 
+############################
+# SignOutAllUsers
+############################
+
+
+@router.post('/admin/signout/all')
+async def signout_all_users(request: Request, user=Depends(get_admin_user)):
+    """Invalidate every outstanding session token, including the caller's.
+
+    Records "now" as the revocation cutoff; ``is_session_revoked`` then rejects
+    any token issued at or before it, so the next request on an old session is a
+    401 and the user has to sign in again. Needed to re-run the SSO login flow
+    fleet-wide (that is where ``d_index`` is resolved) — a token minted before
+    the change would otherwise stay valid for its full JWT lifetime.
+
+    API keys are unaffected: they are not session tokens and carry no ``iat``.
+    """
+    revoked_at = int(time.time())
+    request.app.state.config.AUTH_SESSIONS_REVOKED_AT = revoked_at
+
+    log.info(f'All user sessions revoked by {user.email} (cutoff {revoked_at})')
+
+    return {'revoked_at': revoked_at}
+
+
 @router.post('/add', response_model=SigninResponse)
 async def add_user(
     request: Request,

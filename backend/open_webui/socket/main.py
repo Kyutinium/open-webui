@@ -19,6 +19,7 @@ from open_webui.utils.redis import (
 )
 
 from open_webui.config import (
+    AUTH_SESSIONS_REVOKED_AT,
     CORS_ALLOW_ORIGIN,
 )
 
@@ -39,7 +40,7 @@ from open_webui.env import (
     WEBSOCKET_SERVER_ENGINEIO_LOGGING,
     WEBSOCKET_EVENT_CALLER_TIMEOUT,
 )
-from open_webui.utils.auth import decode_token
+from open_webui.utils.auth import decode_token, is_session_revoked
 from open_webui.socket.utils import RedisDict, RedisLock, YdocManager
 from open_webui.tasks import create_task, stop_item_tasks
 from open_webui.utils.redis import get_redis_connection
@@ -350,7 +351,7 @@ async def connect(sid, environ, auth):
     if auth and 'token' in auth:
         data = decode_token(auth['token'])
 
-        if data is not None and 'id' in data:
+        if data is not None and 'id' in data and not is_session_revoked(data, AUTH_SESSIONS_REVOKED_AT.value):
             user = await Users.get_user_by_id(data['id'])
 
         if user:
@@ -376,7 +377,7 @@ async def user_join(sid, data):
         return
 
     data = decode_token(auth['token'])
-    if data is None or 'id' not in data:
+    if data is None or 'id' not in data or is_session_revoked(data, AUTH_SESSIONS_REVOKED_AT.value):
         return
 
     user = await Users.get_user_by_id(data['id'])
@@ -423,7 +424,7 @@ async def join_channel(sid, data):
         return
 
     data = decode_token(auth['token'])
-    if data is None or 'id' not in data:
+    if data is None or 'id' not in data or is_session_revoked(data, AUTH_SESSIONS_REVOKED_AT.value):
         return
 
     user = await Users.get_user_by_id(data['id'])
@@ -445,7 +446,7 @@ async def join_note(sid, data):
         return
 
     token_data = decode_token(auth['token'])
-    if token_data is None or 'id' not in token_data:
+    if token_data is None or 'id' not in token_data or is_session_revoked(token_data, AUTH_SESSIONS_REVOKED_AT.value):
         return
 
     user = await Users.get_user_by_id(token_data['id'])

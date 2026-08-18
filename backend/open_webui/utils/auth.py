@@ -251,6 +251,37 @@ async def is_valid_token(request, decoded) -> bool:
     return True
 
 
+def is_session_revoked(decoded, revoked_at) -> bool:
+    """Whether a session token predates a "sign out all users" cutoff.
+
+    *revoked_at* is unix seconds (0 / None = never revoked). Unlike the two
+    mechanisms above this needs no Redis: the cutoff is a single persisted
+    number, so one comparison covers every outstanding token.
+
+    A token carrying no ``iat`` cannot be dated, so it counts as revoked — the
+    same fail-closed rule the per-user Redis check uses.
+    """
+    try:
+        revoked_at = int(revoked_at or 0)
+    except (TypeError, ValueError):
+        return False
+
+    if revoked_at <= 0:
+        return False
+
+    token_iat = decoded.get('iat')
+    if token_iat is None:
+        return True
+
+    try:
+        # Compared as a float: ``iat`` is a NumericDate and may carry a fraction,
+        # and truncating it would revoke a token minted just AFTER the cutoff in
+        # the same second, logging that user out a second time for nothing.
+        return float(token_iat) <= revoked_at
+    except (TypeError, ValueError):
+        return True
+
+
 async def invalidate_token(request, token):
     decoded = decode_token(token)
 
@@ -351,6 +382,14 @@ async def get_current_user(
             )
 
         if data is not None and 'id' in data:
+            # Checked before the jti path below, which only covers tokens that
+            # carry one: a fleet-wide sign-out has to reach every session.
+            if is_session_revoked(data, request.app.state.config.AUTH_SESSIONS_REVOKED_AT):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=ERROR_MESSAGES.INVALID_TOKEN,
+                )
+
             if data.get('jti') and not await is_valid_token(request, data):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,

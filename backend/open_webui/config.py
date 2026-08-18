@@ -435,6 +435,13 @@ API_KEY_RATE_LIMIT_BY_GROUP = PersistentConfig(
 
 JWT_EXPIRES_IN = PersistentConfig('JWT_EXPIRES_IN', 'auth.jwt_expiry', os.environ.get('JWT_EXPIRES_IN', '4w'))
 
+# Unix seconds of the last "sign out all users" action. Session tokens issued at
+# or before this instant are rejected, which is how a fleet-wide logout works
+# WITHOUT Redis: one persisted number instead of a list of revoked tokens (the
+# per-token/per-user revocation in utils/auth.py is Redis-only). 0 = never.
+# Runtime state, set through the admin endpoint — there is no env var for it.
+AUTH_SESSIONS_REVOKED_AT = PersistentConfig('AUTH_SESSIONS_REVOKED_AT', 'auth.sessions_revoked_at', 0)
+
 if JWT_EXPIRES_IN.value == '-1':
     log.warning(
         "⚠️  SECURITY WARNING: JWT_EXPIRES_IN is set to '-1'\n"

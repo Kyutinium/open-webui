@@ -190,7 +190,62 @@ Gateway의 Claude Code SDK와 Open WebUI를 연결하는 파이프라인.
 
 ---
 
-## 9. TODO / Future Work
+## 9. Sign Out All Users (전체 세션 무효화)
+
+관리자 패널에서 **모든 사용자의 세션을 한 번에 종료**하는 기능. `d_index`는 SSO 로그인
+콜백에서만 판정되므로, 이미 로그인해 있는 유저는 JWT가 만료될 때까지(기본 `4w`) 값이
+채워지지 않는다. 전원 재로그인을 강제하기 위해 필요.
+
+### 왜 새 메커니즘인가
+
+`utils/auth.py`의 기존 revocation 두 가지(`jti` per-token, `revoked_at` per-user)는
+**Redis 전용**이다 (`if request.app.state.redis:`). 이 배포에는 Redis가 없어서 둘 다
+no-op이므로, Redis 없이도 동작하는 방식이 필요했다 — **cutoff 시각 하나를 DB에 저장**하고
+그보다 이전에 발급된 토큰을 전부 거부한다 (토큰 목록을 관리하지 않으므로 O(1)).
+
+### 동작
+
+- `AUTH_SESSIONS_REVOKED_AT` (`PersistentConfig`, config path `auth.sessions_revoked_at`,
+  기본 `0` = 무효화 이력 없음). env 변수가 아니라 런타임 상태이며 `config` 테이블에 저장돼
+  재시작에도 유지된다. `AppConfig.__setattr__`가 DB 저장 + (Redis가 있으면) 미러링까지
+  자동 처리하므로 멀티 워커/레플리카에도 전파된다
+- `is_session_revoked(decoded, revoked_at)` - 토큰의 `iat <= cutoff`면 무효.
+  `iat`가 없는 토큰은 **발급 시각을 알 수 없으므로 무효로 간주**(fail closed, 기존 Redis
+  경로와 동일 규칙). cutoff가 파싱 불가면 **fail OPEN** — 잘못된 설정값 하나로 전원이
+  영구 잠기는 상황을 만들지 않는다. `iat`는 float로 비교한다 (초 단위로 잘라내면 cutoff와
+  같은 초에 갓 로그인한 유저를 불필요하게 한 번 더 튕긴다)
+- **API 키는 영향 없음** — `get_current_user`의 API 키 분기는 JWT 검증 전에 return하며,
+  API 키에는 `iat`가 없다
+
+### 적용 지점 (HTTP만 막으면 소켓으로 살아남는다)
+
+- `utils/auth.py: get_current_user` - 세션 토큰 전체. 기존 `jti` 체크보다 **앞에** 둔다
+  (`jti`가 없는 토큰도 걸러야 하므로)
+- `socket/main.py` - `decode_token` 4곳 전부 (connect + 3개 핸들러)
+- `routers/terminals.py` - 터미널 websocket 인증
+- `main.py: /api/config` - 무효 세션은 익명으로 처리 (로그인 전 config도 서비스하므로 401이 아님)
+
+### 엔드포인트 / UI
+
+- **`POST /api/v1/auths/admin/signout/all`** (`get_admin_user`) - cutoff을 현재 시각으로
+  기록하고 `{'revoked_at': <ts>}` 반환. **호출한 관리자 본인도 로그아웃된다**
+- **관리자 패널 → 설정 → 일반**, `JWT Expiration` 바로 아래에 버튼 + 확인 다이얼로그.
+  성공 시 로컬 토큰을 지우고 `/auth`로 이동 (본인 토큰도 죽었으므로)
+- 다른 유저는 다음 페이지 로드/새로고침 때 `+layout.svelte`의 기존 처리로 `/auth`로
+  리다이렉트된다. SPA 화면을 열어둔 상태에서는 새로고침 전까지 요청이 401로 실패한다
+- i18n 키 5개 (`en-US`, `ko-KR`)
+
+### 파일
+
+- `backend/open_webui/config.py`, `main.py`, `utils/auth.py`, `socket/main.py`,
+  `routers/auths.py`, `routers/terminals.py`
+- `src/lib/apis/auths/index.ts` (`signoutAllUsers`)
+- `src/lib/components/admin/Settings/General.svelte`
+- `src/lib/i18n/locales/{en-US,ko-KR}/translation.json`
+
+---
+
+## 10. TODO / Future Work
 
 - **Confluence 인증 통합**: dscrowd.token_key 쿠키 자동 획득
   - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성 → pipe에 전달
