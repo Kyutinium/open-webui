@@ -40,7 +40,6 @@ from open_webui.config import (
     SSO_SYSTEM_ID,
     SSG_DEPT_CODES,
     SSG_D_INDEX_CODES,
-    SSG_D_INDEX_REFRESH_ON_LOGIN,
     SSO_LOGIN_ID_CLAIM,
     SSO_USER_ID_CLAIM,
     DEFAULT_USER_ROLE,
@@ -985,11 +984,16 @@ class OAuthClientManager:
         return response
 
 
-async def query_sso_dept_membership(user_data: dict, dept_codes: list) -> list:
+async def query_sso_dept_membership(user_data: dict, dept_codes: list, stop_on_match: bool = False) -> list:
     """Ask the SSO service whether the user belongs to each of `dept_codes`.
 
     Returns one entry per code, in the same order: the upper-cased response body
     ('Y' / 'N'), or None when that request could not be answered.
+
+    With *stop_on_match* the walk ends at the first 'Y', so the returned list can
+    be shorter than *dept_codes* — worth it for the index lookup, which only
+    cares about the first match and now runs on every login. The access gate
+    needs every answer and must leave it off.
     """
     login_id = user_data.get(SSO_LOGIN_ID_CLAIM, '')
     user_epid = user_data.get(SSO_USER_ID_CLAIM, '')
@@ -1021,6 +1025,9 @@ async def query_sso_dept_membership(user_data: dict, dept_codes: list) -> list:
                 log.warning(f'SSO validation request failed for deptCode {dept_code}: {e}')
                 results.append(None)
 
+            if stop_on_match and results[-1] == 'Y':
+                break
+
     return results
 
 
@@ -1029,20 +1036,30 @@ async def resolve_d_index(user_data: dict) -> Optional[int]:
 
     Each candidate code stands for exactly one department, so the index is the
     1-based position of the first code the user belongs to, and 0 when they
-    belong to none of them. Returns None when the index cannot be determined
-    (feature not configured, or every SSO request failed) so the caller leaves
-    the stored value alone instead of writing a wrong 0.
+    belong to none of them.
+
+    Returns None whenever the answer is not trustworthy, so the caller keeps the
+    stored value and retries on the next login rather than writing something
+    wrong. That covers three cases: the feature is not configured, a lookup
+    failed before the matching code (the failed one may have been the user's real
+    — and earlier — department, which would make the match report the wrong
+    index), or nothing matched while some code never answered (which would turn
+    into a claim of "belongs to nothing").
     """
     if not (SSO_API_URL and SSG_D_INDEX_CODES):
         return None
 
-    results = await query_sso_dept_membership(user_data, SSG_D_INDEX_CODES)
+    results = await query_sso_dept_membership(user_data, SSG_D_INDEX_CODES, stop_on_match=True)
 
-    for index, result in enumerate(results, start=1):
-        if result == 'Y':
-            return index
+    if not results:
+        return None
 
-    if all(result is None for result in results):
+    if results[-1] == 'Y':
+        if any(result is None for result in results[:-1]):
+            return None
+        return len(results)
+
+    if any(result is None for result in results):
         return None
 
     return 0
@@ -1652,13 +1669,14 @@ class OAuthManager:
                         await Users.update_user_oauth_by_id(user.id, provider, sub, db=db)
 
             if user:
-                # Fill in the department index for users that predate the column, or
-                # re-resolve it when the deployment wants to follow department moves.
-                if user.d_index is None or SSG_D_INDEX_REFRESH_ON_LOGIN:
-                    d_index = await resolve_d_index(user_data)
-                    if d_index is not None and d_index != user.d_index:
-                        await Users.update_user_by_id(user.id, {'d_index': d_index}, db=db)
-                        user.d_index = d_index
+                # Re-resolved on EVERY login, not just when unset: a user who moves
+                # departments must stop routing to their old index, and resolving
+                # once would pin the first answer forever. resolve_d_index returns
+                # None when it cannot be trusted, which leaves the stored value be.
+                d_index = await resolve_d_index(user_data)
+                if d_index is not None and d_index != user.d_index:
+                    await Users.update_user_by_id(user.id, {'d_index': d_index}, db=db)
+                    user.d_index = d_index
 
                 determined_role = await self.get_user_role(user, user_data)
                 if user.role != determined_role:

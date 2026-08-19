@@ -475,6 +475,9 @@ SSO_USER_ID_CLAIM = os.environ.get('SSO_USER_ID_CLAIM', 'userid')
 # `d_index` is the 1-based position of the first code they belong to
 # (0 = none of them). Reordering it therefore renumbers already-stored indexes,
 # and this list never grants or denies access.
+# Resolved on EVERY login so a user who moves departments stops routing to their
+# old index; the lookup stops at the first matching code, so the cost is one SSO
+# request per candidate ahead of the user's own department.
 _ssg_d_index_codes_raw = os.environ.get('SSG_D_INDEX_CODES', '[]')
 try:
     SSG_D_INDEX_CODES = json.loads(_ssg_d_index_codes_raw)
@@ -482,12 +485,6 @@ try:
         SSG_D_INDEX_CODES = []
 except (json.JSONDecodeError, TypeError):
     SSG_D_INDEX_CODES = []
-
-# An index is resolved once by default (at signup, or on the first login after
-# the column was added) and then left alone. Set this to re-resolve it on every
-# login - costs one SSO request per candidate code per login, but follows users
-# who move between departments.
-SSG_D_INDEX_REFRESH_ON_LOGIN = os.environ.get('SSG_D_INDEX_REFRESH_ON_LOGIN', 'False').lower() == 'true'
 
 ####################################
 # OAuth config
