@@ -306,6 +306,30 @@
 					<th
 						scope="col"
 						class="px-2.5 py-2 cursor-pointer select-none"
+						on:click={() => setSortKey('d_index')}
+					>
+						<div class="flex gap-1.5 items-center">
+							{$i18n.t('D Index')}
+
+							{#if orderBy === 'd_index'}
+								<span class="font-normal"
+									>{#if direction === 'asc'}
+										<ChevronUp className="size-2" />
+									{:else}
+										<ChevronDown className="size-2" />
+									{/if}
+								</span>
+							{:else}
+								<span class="invisible">
+									<ChevronUp className="size-2" />
+								</span>
+							{/if}
+						</div>
+					</th>
+
+					<th
+						scope="col"
+						class="px-2.5 py-2 cursor-pointer select-none"
 						on:click={() => setSortKey('last_active_at')}
 					>
 						<div class="flex gap-1.5 items-center">
@@ -399,6 +423,20 @@
 							</div>
 						</td>
 						<td class=" px-3 py-1"> {user.email} </td>
+
+						<td class=" px-3 py-1 tabular-nums">
+							{#if (user.d_index ?? null) === null}
+								<Tooltip content={$i18n.t('Not resolved yet — set on this user\'s next sign-in')}>
+									<span class="text-gray-400 dark:text-gray-500">&ndash;</span>
+								</Tooltip>
+							{:else if user.d_index === 0}
+								<Tooltip content={$i18n.t('Belongs to none of the candidate departments')}>
+									<span class="text-gray-400 dark:text-gray-500">0</span>
+								</Tooltip>
+							{:else}
+								{user.d_index}
+							{/if}
+						</td>
 
 						<td class=" px-3 py-1">
 							{dayjs(user.last_active_at * 1000).fromNow()}

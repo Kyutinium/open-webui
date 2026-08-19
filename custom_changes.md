@@ -243,6 +243,33 @@ no-op이므로, Redis 없이도 동작하는 방식이 필요했다 — **cutoff
 - `src/lib/components/admin/Settings/General.svelte`
 - `src/lib/i18n/locales/{en-US,ko-KR}/translation.json`
 
+### 관리자 사용자 목록에 표시
+
+**관리자 패널 → 사용자** 테이블에 `D Index` 컬럼. Email 다음, Last Active 앞에 둔다
+(타임스탬프 뒤로 밀어내지 않고 신원 컬럼 옆에 붙임).
+
+세 상태를 **구분해서** 보여준다 — 롤아웃이 실제로 먹혔는지 관리자가 스캔할 수 있어야 한다:
+
+| 표시 | 의미 |
+|---|---|
+| `1`, `2`, … | 후보 리스트의 N번째 부서 |
+| muted `0` | 후보 중 어디에도 안 속함 (판정 완료) |
+| muted `–` | 아직 미판정 = **이 유저는 재로그인이 필요하다** |
+
+`0`과 `–`를 같은 모양으로 뭉개면 "전체 로그아웃이 먹혔는지"를 알 수 없다. 각각 tooltip로
+의미를 붙였다. 컬럼은 `tabular-nums` + 좌정렬 — 값이 크기가 아니라 명목 index이므로
+이웃 컬럼과 같은 축에 글리프를 세워 세로 스캔이 되게 한다.
+
+정렬도 지원한다 (`setSortKey('d_index')` + `models/users.py`의 `order_by` 화이트리스트에
+분기 추가). SQLite는 asc에서 NULL이 먼저 오므로 **오름차순 정렬이 곧 "재로그인 안 한
+사람 모아보기"** 가 된다.
+
+API 변경은 없다 — 목록 응답 모델 `UserGroupIdsModel`이 `UserModel`을 상속하므로
+`d_index`가 이미 내려온다.
+
+- `src/lib/components/admin/Users/UserList.svelte`, `backend/open_webui/models/users.py`,
+  i18n 키 3개
+
 ---
 
 ## 10. TODO / Future Work

@@ -487,6 +487,11 @@ class UsersTable:
                         stmt = stmt.order_by(User.role.asc())
                     else:
                         stmt = stmt.order_by(User.role.desc())
+                elif order_by == 'd_index':
+                    if direction == 'asc':
+                        stmt = stmt.order_by(User.d_index.asc())
+                    else:
+                        stmt = stmt.order_by(User.d_index.desc())
 
             else:
                 stmt = stmt.order_by(User.created_at.desc())
