@@ -466,18 +466,17 @@ SSO_LOGIN_ID_CLAIM = os.environ.get('SSO_LOGIN_ID_CLAIM', 'loginid')
 SSO_USER_ID_CLAIM = os.environ.get('SSO_USER_ID_CLAIM', 'userid')
 
 ####################################
-# Department index config
+# D index config
 ####################################
 
-# Separate from SSG_DEPT_CODES: that list is only an access gate and may mix
-# several departments inside one SSG group. This list is an ORDERED candidate
-# list where one SSG code means exactly one department, and a user's stored
-# `d_index` is the 1-based position of the first code they belong to
-# (0 = none of them). Reordering it therefore renumbers already-stored indexes,
-# and this list never grants or denies access.
-# Resolved on EVERY login so a user who moves departments stops routing to their
-# old index; the lookup stops at the first matching code, so the cost is one SSO
-# request per candidate ahead of the user's own department.
+# Separate from SSG_DEPT_CODES, and coarser than it: one entry there can cover
+# several of the codes listed here, and that list only gates access. This is an
+# ORDERED candidate list, and a user's stored `d_index` is the 1-based position
+# of the first code they belong to (0 = none of them). Reordering it therefore
+# renumbers already-stored indexes, and this list never grants or denies access.
+# Resolved on EVERY login so a user whose membership changes stops routing to
+# their old index; the lookup stops at the first matching code, so the cost is
+# one SSO request per candidate ahead of the user's own.
 _ssg_d_index_codes_raw = os.environ.get('SSG_D_INDEX_CODES', '[]')
 try:
     SSG_D_INDEX_CODES = json.loads(_ssg_d_index_codes_raw)

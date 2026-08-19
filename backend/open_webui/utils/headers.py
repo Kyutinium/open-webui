@@ -19,7 +19,7 @@ def include_user_info_headers(headers, user):
         FORWARD_USER_INFO_HEADER_USER_EMAIL: user.email,
         FORWARD_USER_INFO_HEADER_USER_ROLE: user.role,
         # Left out entirely while the index is unresolved, so a receiver can tell
-        # 'not resolved yet' (header absent) from 'belongs to no candidate
-        # department' (0) without inventing a sentinel value.
+        # 'not resolved yet' (header absent) from 'matches no candidate' (0)
+        # without inventing a sentinel value.
         **({FORWARD_USER_INFO_HEADER_USER_D_INDEX: str(d_index)} if d_index is not None else {}),
     }

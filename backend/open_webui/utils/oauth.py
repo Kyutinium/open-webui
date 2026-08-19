@@ -984,16 +984,16 @@ class OAuthClientManager:
         return response
 
 
-async def query_sso_dept_membership(user_data: dict, dept_codes: list, stop_on_match: bool = False) -> list:
-    """Ask the SSO service whether the user belongs to each of `dept_codes`.
+async def query_sso_membership(user_data: dict, codes: list, stop_on_match: bool = False) -> list:
+    """Ask the SSO service whether the user belongs to each of `codes`.
 
     Returns one entry per code, in the same order: the upper-cased response body
     ('Y' / 'N'), or None when that request could not be answered.
 
     With *stop_on_match* the walk ends at the first 'Y', so the returned list can
-    be shorter than *dept_codes* — worth it for the index lookup, which only
-    cares about the first match and now runs on every login. The access gate
-    needs every answer and must leave it off.
+    be shorter than *codes* — worth it for the index lookup, which only cares
+    about the first match and now runs on every login. The access gate needs
+    every answer and must leave it off.
     """
     login_id = user_data.get(SSO_LOGIN_ID_CLAIM, '')
     user_epid = user_data.get(SSO_USER_ID_CLAIM, '')
@@ -1006,8 +1006,8 @@ async def query_sso_dept_membership(user_data: dict, dept_codes: list, stop_on_m
 
     results = []
     async with aiohttp.ClientSession(trust_env=True) as session:
-        for dept_code in dept_codes:
-            params = {**common_params, 'deptCode': dept_code}
+        for code in codes:
+            params = {**common_params, 'deptCode': code}
             try:
                 async with session.get(
                     SSO_API_URL,
@@ -1019,10 +1019,10 @@ async def query_sso_dept_membership(user_data: dict, dept_codes: list, stop_on_m
                         text = await resp.text()
                         results.append(text.strip().upper())
                     else:
-                        log.warning(f'SSO validation request failed for deptCode {dept_code}: status {resp.status}')
+                        log.warning(f'SSO validation request failed for code {code}: status {resp.status}')
                         results.append(None)
             except Exception as e:
-                log.warning(f'SSO validation request failed for deptCode {dept_code}: {e}')
+                log.warning(f'SSO validation request failed for code {code}: {e}')
                 results.append(None)
 
             if stop_on_match and results[-1] == 'Y':
@@ -1032,24 +1032,23 @@ async def query_sso_dept_membership(user_data: dict, dept_codes: list, stop_on_m
 
 
 async def resolve_d_index(user_data: dict) -> Optional[int]:
-    """Resolve the user's department index against SSG_D_INDEX_CODES.
+    """Resolve the user's d index against SSG_D_INDEX_CODES.
 
-    Each candidate code stands for exactly one department, so the index is the
-    1-based position of the first code the user belongs to, and 0 when they
-    belong to none of them.
+    The index is the 1-based position of the first candidate code the user
+    belongs to, and 0 when they belong to none of them.
 
     Returns None whenever the answer is not trustworthy, so the caller keeps the
     stored value and retries on the next login rather than writing something
     wrong. That covers three cases: the feature is not configured, a lookup
-    failed before the matching code (the failed one may have been the user's real
-    — and earlier — department, which would make the match report the wrong
-    index), or nothing matched while some code never answered (which would turn
-    into a claim of "belongs to nothing").
+    failed before the matching code (the failed one sits EARLIER in the list, so
+    it may have been the user's real match and the one found later would report
+    the wrong index), or nothing matched while some code never answered (which
+    would turn into a claim of "matches nothing").
     """
     if not (SSO_API_URL and SSG_D_INDEX_CODES):
         return None
 
-    results = await query_sso_dept_membership(user_data, SSG_D_INDEX_CODES, stop_on_match=True)
+    results = await query_sso_membership(user_data, SSG_D_INDEX_CODES, stop_on_match=True)
 
     if not results:
         return None
@@ -1669,10 +1668,10 @@ class OAuthManager:
                         await Users.update_user_oauth_by_id(user.id, provider, sub, db=db)
 
             if user:
-                # Re-resolved on EVERY login, not just when unset: a user who moves
-                # departments must stop routing to their old index, and resolving
-                # once would pin the first answer forever. resolve_d_index returns
-                # None when it cannot be trusted, which leaves the stored value be.
+                # Re-resolved on EVERY login, not just when unset: a user whose
+                # membership changes must stop routing to their old index, and
+                # resolving once would pin the first answer forever. resolve_d_index
+                # returns None when it cannot be trusted, leaving the stored value be.
                 d_index = await resolve_d_index(user_data)
                 if d_index is not None and d_index != user.d_index:
                     await Users.update_user_by_id(user.id, {'d_index': d_index}, db=db)
@@ -1732,7 +1731,7 @@ class OAuthManager:
             else:
                 # SSO department validation for new users
                 if SSO_API_URL and SSG_DEPT_CODES:
-                    results = await query_sso_dept_membership(user_data, SSG_DEPT_CODES)
+                    results = await query_sso_membership(user_data, SSG_DEPT_CODES)
 
                     if all(result == 'N' for result in results if result is not None):
                         raise HTTPException(

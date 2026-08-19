@@ -430,7 +430,7 @@
 									<span class="text-gray-400 dark:text-gray-500">&ndash;</span>
 								</Tooltip>
 							{:else if user.d_index === 0}
-								<Tooltip content={$i18n.t('Belongs to none of the candidate departments')}>
+								<Tooltip content={$i18n.t('Matches none of the candidates')}>
 									<span class="text-gray-400 dark:text-gray-500">0</span>
 								</Tooltip>
 							{:else}

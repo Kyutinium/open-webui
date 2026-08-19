@@ -703,9 +703,9 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 from urllib.parse import quote
                 extra_headers["X-OpenWebUI-User-Name"] = quote(owui_username)
 
-        # Department index resolved by Open WebUI core: prefer the forwarded
-        # header, fall back to the user payload. An absent header/None means
-        # "not resolved yet"; 0 means "belongs to no candidate department".
+        # d index resolved by Open WebUI core: prefer the forwarded header, fall
+        # back to the user payload. An absent header/None means "not resolved
+        # yet"; 0 means "matches no candidate".
         d_index = meta_headers.get("x-openwebui-user-d-index", "")
         if d_index == "" and __user__:
             raw_d_index = __user__.get("d_index")

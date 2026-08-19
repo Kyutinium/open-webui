@@ -68,7 +68,7 @@ class User(Base):
     oauth = Column(JSON, nullable=True)
     scim = Column(JSON, nullable=True)
 
-    # 1-based position of the SSG candidate department the user belongs to
+    # 1-based position of the first SSG candidate code the user belongs to
     # (0 = none of the candidates, NULL = not resolved yet).
     d_index = Column(Integer, nullable=True)
 
