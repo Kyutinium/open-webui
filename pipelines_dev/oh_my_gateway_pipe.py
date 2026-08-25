@@ -48,6 +48,7 @@ import logging
 import random
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Iterator, Optional
 from uuid import uuid4
@@ -116,7 +117,12 @@ class Pipeline:
         )
         TIMEOUT: int = Field(
             default=600,
-            description="Total request timeout in seconds (increase for heavy MCP/search workloads)",
+            description=(
+                "Wall-clock budget per turn in seconds, enforced in the stream "
+                "loop (gateway keepalives reset httpx's per-read timeout, so "
+                "only this deadline bounds a stalled turn). Increase for heavy "
+                "MCP/search workloads."
+            ),
         )
         # Context injection settings
         INJECT_USER_CONTEXT: bool = Field(
@@ -941,6 +947,18 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 write=30.0,
                 pool=30.0,
             )
+            # httpx's ``read`` timeout is PER-READ, not total: the gateway
+            # emits an SSE keepalive comment every ~15s on idle streams, so
+            # each keepalive resets the read timeout and a wedged turn (CLI
+            # stalled upstream, emitting only keepalives) is never cut. The
+            # wall-clock deadline below is what actually enforces the
+            # TIMEOUT valve; when it fires we stop iterating, the connection
+            # closes, and the gateway's consumer-disconnect teardown
+            # interrupts and reaps the turn's Claude CLI subprocess. Without
+            # it that session stays pinned forever (active turns are exempt
+            # from TTL expiry and LRU eviction) and the leaked worker holds a
+            # session + turn slot until the container is recreated.
+            deadline = time.monotonic() + float(self.valves.TIMEOUT)
             with httpx.Client(timeout=timeout) as client:
                 resp_cm, resp = self._open_responses_stream(client, url, payload, chat_id)
                 try:
@@ -948,6 +966,23 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     # Responses API uses SSE with event: type\ndata: json
                     current_event_type = ""
                     for line in resp.iter_lines():
+                        # Wall-clock budget — checked before the keepalive
+                        # skip so keepalive-only (wedged) streams are bounded
+                        # too. Breaking out closes the response in the
+                        # ``finally`` below, which is what signals the
+                        # gateway to tear the turn down.
+                        if time.monotonic() > deadline:
+                            log.error(
+                                "[PIPE] wall-clock timeout (%ss) for chat=%s — "
+                                "closing stream so the gateway reaps the turn",
+                                self.valves.TIMEOUT,
+                                chat_id,
+                            )
+                            yield (
+                                f"\n\nError: gateway turn exceeded "
+                                f"{self.valves.TIMEOUT}s and was cut off"
+                            )
+                            break
                         # SSE keepalive comments
                         if line.startswith(":"):
                             continue
