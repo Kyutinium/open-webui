@@ -48,6 +48,7 @@ import logging
 import random
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Iterator, Optional
 from uuid import uuid4
@@ -55,6 +56,47 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 import httpx
+
+class _StallClock:
+    """Wall-clock guard over SDK *silence*, not turn length.
+
+    A hard per-turn deadline would cut legitimately long agentic turns that
+    are still streaming output — the gateway intentionally leaves streaming
+    turns unbounded, and its own stall guard (STREAM_STALL_TIMEOUT) resets on
+    every real chunk. This clock mirrors that policy on the consumer side:
+    real SSE fields (``event:`` / ``data:``) reset it, while keepalive
+    comments and blank frame separators do not — a wedged turn emits only
+    those, so only a wedge can exhaust the budget.
+
+    Stdlib-only and top-level so it is unit-testable without importing the
+    Pipe's httpx/pydantic dependencies (see tests/test_oh_my_gateway_pipe_stall.py).
+    """
+
+    def __init__(self, budget: float):
+        self.budget = float(budget)
+        self.last_real = time.monotonic()
+
+    def note(self, line: str) -> bool:
+        """Record one SSE line; return True when the silence budget is spent."""
+        if line.startswith("event: ") or line.startswith("data: "):
+            self.last_real = time.monotonic()
+            return False
+        return self.budget > 0 and time.monotonic() - self.last_real > self.budget
+
+
+def _read_timeout(budget: float):
+    """httpx ``read`` timeout for a TIMEOUT valve value.
+
+    ``TIMEOUT<=0`` means "guard disabled" (matching the gateway's 0=disabled
+    knob convention), so the HTTP read timeout must be disabled too —
+    ``httpx.Timeout(read=0)`` would instead fail every read instantly,
+    making the disabled setting mean the exact opposite in practice.
+    Stdlib-only and top-level for the same testability reason as
+    :class:`_StallClock`.
+    """
+    budget = float(budget)
+    return None if budget <= 0 else budget
+
 
 # Regex for parsing the gateway's 409 "Stale previous_response_id" body.  The
 # wrapper helpfully includes the latest valid response_id so we can recover
@@ -116,7 +158,13 @@ class Pipeline:
         )
         TIMEOUT: int = Field(
             default=600,
-            description="Total request timeout in seconds (increase for heavy MCP/search workloads)",
+            description=(
+                "Max seconds of SDK *silence* per turn (real SSE events reset "
+                "the clock, keepalives do not — so long agentic turns that "
+                "keep streaming are unaffected and only a wedged turn is "
+                "cut). Also used as httpx's per-read timeout. Increase for "
+                "workloads with long silent stretches."
+            ),
         )
         # Context injection settings
         INJECT_USER_CONTEXT: bool = Field(
@@ -937,10 +985,25 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
             timeout = httpx.Timeout(
                 connect=30.0,
-                read=float(self.valves.TIMEOUT),
+                read=_read_timeout(self.valves.TIMEOUT),
                 write=30.0,
                 pool=30.0,
             )
+            # httpx's ``read`` timeout is PER-READ, not total: the gateway
+            # emits an SSE keepalive comment every ~15s on idle streams, so
+            # each keepalive resets the read timeout and a wedged turn (CLI
+            # stalled upstream, emitting only keepalives) is never cut. The
+            # stall clock below is what actually enforces the TIMEOUT valve —
+            # over SILENCE, not turn length: real events reset it, so long
+            # agentic turns that keep streaming are unaffected (mirroring the
+            # gateway's own STREAM_STALL_TIMEOUT policy). When it fires we
+            # stop iterating, the connection closes, and the gateway's
+            # consumer-disconnect teardown interrupts and reaps the turn's
+            # Claude CLI subprocess. Without it that session stays pinned
+            # forever (active turns are exempt from TTL expiry and LRU
+            # eviction) and the leaked worker holds a session + turn slot
+            # until the container is recreated.
+            stall = _StallClock(float(self.valves.TIMEOUT))
             with httpx.Client(timeout=timeout) as client:
                 resp_cm, resp = self._open_responses_stream(client, url, payload, chat_id)
                 try:
@@ -948,6 +1011,24 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     # Responses API uses SSE with event: type\ndata: json
                     current_event_type = ""
                     for line in resp.iter_lines():
+                        # Silence budget — noted before the keepalive skip so
+                        # keepalive-only (wedged) streams are bounded too.
+                        # Breaking out closes the response in the ``finally``
+                        # below, which is what signals the gateway to tear
+                        # the turn down.
+                        if stall.note(line):
+                            log.error(
+                                "[PIPE] no real SDK event for %ss (chat=%s) — "
+                                "closing the wedged stream so the gateway "
+                                "reaps the turn",
+                                self.valves.TIMEOUT,
+                                chat_id,
+                            )
+                            yield (
+                                f"\n\nError: the agent produced no output for "
+                                f"{self.valves.TIMEOUT}s and the turn was cut off"
+                            )
+                            break
                         # SSE keepalive comments
                         if line.startswith(":"):
                             continue
@@ -1798,7 +1879,13 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
         payload["stream"] = False
         try:
-            with httpx.Client(timeout=httpx.Timeout(self.valves.TIMEOUT)) as client:
+            timeout = httpx.Timeout(
+                connect=30.0,
+                read=_read_timeout(self.valves.TIMEOUT),
+                write=30.0,
+                pool=30.0,
+            )
+            with httpx.Client(timeout=timeout) as client:
                 resp = client.post(url, json=payload, headers=self._make_headers())
                 if resp.status_code != 200:
                     return f"Error: Server error ({resp.status_code}): {resp.text}"
