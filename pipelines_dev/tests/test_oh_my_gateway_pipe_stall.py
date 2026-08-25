@@ -16,21 +16,23 @@ import pathlib
 import time
 
 
-def _load_stall_clock():
+def _load_helpers():
     src_path = pathlib.Path(__file__).resolve().parent.parent / "oh_my_gateway_pipe.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
-    cls = next(
+    wanted = {"_StallClock", "_read_timeout"}
+    nodes = [
         node
         for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "_StallClock"
-    )
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in wanted
+    ]
+    assert {node.name for node in nodes} == wanted
     namespace = {"time": time}
-    module = ast.Module(body=[cls], type_ignores=[])
+    module = ast.Module(body=nodes, type_ignores=[])
     exec(compile(module, str(src_path), "exec"), namespace)
-    return namespace["_StallClock"]
+    return namespace["_StallClock"], namespace["_read_timeout"]
 
 
-_StallClock = _load_stall_clock()
+_StallClock, _read_timeout = _load_helpers()
 
 
 def test_keepalive_only_stream_times_out():
@@ -78,6 +80,16 @@ def test_zero_budget_disables_the_guard():
     clock = _StallClock(0)
     clock.last_real -= 10_000  # ancient progress
     assert clock.note(": keepalive") is False
+
+
+def test_zero_budget_also_disables_the_httpx_read_timeout():
+    """TIMEOUT=0 must disable BOTH layers consistently: the stall clock above
+    AND the httpx read timeout. read=0 would instead fail every read
+    instantly — the opposite of 'disabled' (review: settings-semantics bug)."""
+    assert _read_timeout(0) is None
+    assert _read_timeout(-1) is None
+    assert _read_timeout(600) == 600.0
+    assert isinstance(_read_timeout(600), float)
 
 
 if __name__ == "__main__":

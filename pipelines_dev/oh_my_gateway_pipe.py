@@ -84,6 +84,20 @@ class _StallClock:
         return self.budget > 0 and time.monotonic() - self.last_real > self.budget
 
 
+def _read_timeout(budget: float):
+    """httpx ``read`` timeout for a TIMEOUT valve value.
+
+    ``TIMEOUT<=0`` means "guard disabled" (matching the gateway's 0=disabled
+    knob convention), so the HTTP read timeout must be disabled too —
+    ``httpx.Timeout(read=0)`` would instead fail every read instantly,
+    making the disabled setting mean the exact opposite in practice.
+    Stdlib-only and top-level for the same testability reason as
+    :class:`_StallClock`.
+    """
+    budget = float(budget)
+    return None if budget <= 0 else budget
+
+
 # Regex for parsing the gateway's 409 "Stale previous_response_id" body.  The
 # wrapper helpfully includes the latest valid response_id so we can recover
 # without forcing a fresh session.  Example body::
@@ -971,7 +985,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
             url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
             timeout = httpx.Timeout(
                 connect=30.0,
-                read=float(self.valves.TIMEOUT),
+                read=_read_timeout(self.valves.TIMEOUT),
                 write=30.0,
                 pool=30.0,
             )
@@ -1865,7 +1879,13 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         url = f"{self.valves.BASE_URL.rstrip('/')}/v1/responses"
         payload["stream"] = False
         try:
-            with httpx.Client(timeout=httpx.Timeout(self.valves.TIMEOUT)) as client:
+            timeout = httpx.Timeout(
+                connect=30.0,
+                read=_read_timeout(self.valves.TIMEOUT),
+                write=30.0,
+                pool=30.0,
+            )
+            with httpx.Client(timeout=timeout) as client:
                 resp = client.post(url, json=payload, headers=self._make_headers())
                 if resp.status_code != 200:
                     return f"Error: Server error ({resp.status_code}): {resp.text}"
