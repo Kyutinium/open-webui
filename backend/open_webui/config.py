@@ -435,6 +435,13 @@ API_KEY_RATE_LIMIT_BY_GROUP = PersistentConfig(
 
 JWT_EXPIRES_IN = PersistentConfig('JWT_EXPIRES_IN', 'auth.jwt_expiry', os.environ.get('JWT_EXPIRES_IN', '4w'))
 
+# Unix seconds of the last "sign out all users" action. Session tokens issued at
+# or before this instant are rejected, which is how a fleet-wide logout works
+# WITHOUT Redis: one persisted number instead of a list of revoked tokens (the
+# per-token/per-user revocation in utils/auth.py is Redis-only). 0 = never.
+# Runtime state, set through the admin endpoint — there is no env var for it.
+AUTH_SESSIONS_REVOKED_AT = PersistentConfig('AUTH_SESSIONS_REVOKED_AT', 'auth.sessions_revoked_at', 0)
+
 if JWT_EXPIRES_IN.value == '-1':
     log.warning(
         "⚠️  SECURITY WARNING: JWT_EXPIRES_IN is set to '-1'\n"
@@ -457,6 +464,26 @@ except (json.JSONDecodeError, TypeError):
     SSG_DEPT_CODES = []
 SSO_LOGIN_ID_CLAIM = os.environ.get('SSO_LOGIN_ID_CLAIM', 'loginid')
 SSO_USER_ID_CLAIM = os.environ.get('SSO_USER_ID_CLAIM', 'userid')
+
+####################################
+# D index config
+####################################
+
+# Separate from SSG_DEPT_CODES, and coarser than it: one entry there can cover
+# several of the codes listed here, and that list only gates access. This is an
+# ORDERED candidate list, and a user's stored `d_index` is the 1-based position
+# of the first code they belong to (0 = none of them). Reordering it therefore
+# renumbers already-stored indexes, and this list never grants or denies access.
+# Resolved on EVERY login so a user whose membership changes stops routing to
+# their old index; the lookup stops at the first matching code, so the cost is
+# one SSO request per candidate ahead of the user's own.
+_ssg_d_index_codes_raw = os.environ.get('SSG_D_INDEX_CODES', '[]')
+try:
+    SSG_D_INDEX_CODES = json.loads(_ssg_d_index_codes_raw)
+    if not isinstance(SSG_D_INDEX_CODES, list):
+        SSG_D_INDEX_CODES = []
+except (json.JSONDecodeError, TypeError):
+    SSG_D_INDEX_CODES = []
 
 ####################################
 # OAuth config

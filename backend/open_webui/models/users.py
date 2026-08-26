@@ -13,6 +13,7 @@ from open_webui.utils.validate import validate_profile_image_url
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import (
     BigInteger,
+    Integer,
     JSON,
     Column,
     String,
@@ -67,6 +68,10 @@ class User(Base):
     oauth = Column(JSON, nullable=True)
     scim = Column(JSON, nullable=True)
 
+    # 1-based position of the first SSG candidate code the user belongs to
+    # (0 = none of the candidates, NULL = not resolved yet).
+    d_index = Column(Integer, nullable=True)
+
     last_active_at = Column(BigInteger)
     updated_at = Column(BigInteger)
     created_at = Column(BigInteger)
@@ -99,6 +104,8 @@ class UserModel(BaseModel):
 
     oauth: Optional[dict] = None
     scim: Optional[dict] = None
+
+    d_index: Optional[int] = None
 
     last_active_at: int  # timestamp in epoch
     updated_at: int  # timestamp in epoch
@@ -480,6 +487,11 @@ class UsersTable:
                         stmt = stmt.order_by(User.role.asc())
                     else:
                         stmt = stmt.order_by(User.role.desc())
+                elif order_by == 'd_index':
+                    if direction == 'asc':
+                        stmt = stmt.order_by(User.d_index.asc())
+                    else:
+                        stmt = stmt.order_by(User.d_index.desc())
 
             else:
                 stmt = stmt.order_by(User.created_at.desc())

@@ -7,17 +7,19 @@
 		getAdminConfig,
 		getLdapConfig,
 		getLdapServer,
+		signoutAllUsers,
 		updateAdminConfig,
 		updateLdapConfig,
 		updateLdapServer
 	} from '$lib/apis/auths';
+	import SignOutAllUsersConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import { getBanners, setBanners } from '$lib/apis/configs';
 	import { getGroups } from '$lib/apis/groups';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { WEBUI_BUILD_HASH, WEBUI_VERSION } from '$lib/constants';
-	import { banners as _banners, config, showChangelog } from '$lib/stores';
+	import { banners as _banners, config, showChangelog, user } from '$lib/stores';
 	import type { Banner } from '$lib/types';
 	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
@@ -38,6 +40,9 @@
 	let adminConfig = null;
 	let webhookUrl = '';
 	let groups = [];
+
+	let showSignOutAllUsersConfirm = false;
+	let signingOutAllUsers = false;
 
 	let banners: Banner[] = [];
 
@@ -132,6 +137,35 @@
 		banners = await getBanners(localStorage.token);
 	});
 </script>
+
+<SignOutAllUsersConfirmDialog
+	bind:show={showSignOutAllUsersConfirm}
+	title={$i18n.t('Sign Out All Users')}
+	message={$i18n.t(
+		'Every active session ends, including yours — you will be returned to the sign-in page. API keys keep working.'
+	)}
+	confirmLabel={$i18n.t('Sign Out')}
+	on:confirm={async () => {
+		signingOutAllUsers = true;
+
+		const res = await signoutAllUsers(localStorage.token).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
+
+		if (!res) {
+			signingOutAllUsers = false;
+			return;
+		}
+
+		// The caller's own token was revoked too, so every further request would
+		// 401. Drop the local session and land on the sign-in page instead.
+		toast.success($i18n.t('All users have been signed out.'));
+		user.set(null);
+		localStorage.removeItem('token');
+		location.href = '/auth';
+	}}
+/>
 
 <form
 	class="flex flex-col h-full justify-between space-y-3 text-sm"
@@ -571,6 +605,31 @@
 								</div>
 							</div>
 						{/if}
+					</div>
+
+					<div class=" mb-2.5 w-full justify-between">
+						<div class="flex w-full justify-between">
+							<div class=" self-center text-xs font-medium">
+								{$i18n.t('Sign Out All Users')}
+							</div>
+
+							<button
+								class="text-xs disabled:opacity-50"
+								type="button"
+								disabled={signingOutAllUsers}
+								on:click={() => {
+									showSignOutAllUsersConfirm = true;
+								}}
+							>
+								{signingOutAllUsers ? $i18n.t('Signing out...') : $i18n.t('Sign Out')}
+							</button>
+						</div>
+
+						<div class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+							{$i18n.t(
+								'Ends every active session, including your own, so everyone must sign in again. Existing tokens stop working immediately instead of lasting out their JWT expiration. API keys are not affected.'
+							)}
+						</div>
 					</div>
 
 					<div class=" space-y-3">

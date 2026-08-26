@@ -389,6 +389,7 @@ from open_webui.config import (
     ADMIN_EMAIL,
     SHOW_ADMIN_DETAILS,
     JWT_EXPIRES_IN,
+    AUTH_SESSIONS_REVOKED_AT,
     ENABLE_SIGNUP,
     ENABLE_LOGIN_FORM,
     ENABLE_PASSWORD_CHANGE_FORM,
@@ -571,6 +572,7 @@ from open_webui.utils.auth import (
     get_license_data,
     get_http_authorization_cred,
     decode_token,
+    is_session_revoked,
     get_admin_user,
     get_verified_user,
     create_admin_user,
@@ -914,6 +916,7 @@ app.state.config.API_KEY_RATE_LIMIT_TZ = API_KEY_RATE_LIMIT_TZ
 app.state.config.API_KEY_RATE_LIMIT_BY_GROUP = API_KEY_RATE_LIMIT_BY_GROUP
 
 app.state.config.JWT_EXPIRES_IN = JWT_EXPIRES_IN
+app.state.config.AUTH_SESSIONS_REVOKED_AT = AUTH_SESSIONS_REVOKED_AT
 
 app.state.config.SHOW_ADMIN_DETAILS = SHOW_ADMIN_DETAILS
 app.state.config.ADMIN_EMAIL = ADMIN_EMAIL
@@ -2239,7 +2242,10 @@ async def get_app_config(request: Request):
                 detail='Invalid token',
             )
         if data is not None and 'id' in data:
-            user = await Users.get_user_by_id(data['id'])
+            # A revoked session reads as anonymous here rather than erroring:
+            # this endpoint serves the pre-login config too.
+            if not is_session_revoked(data, request.app.state.config.AUTH_SESSIONS_REVOKED_AT):
+                user = await Users.get_user_by_id(data['id'])
 
     user_count = await Users.get_num_users()
     onboarding = False

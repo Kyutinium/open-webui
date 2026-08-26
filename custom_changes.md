@@ -135,7 +135,160 @@ Gateway의 Claude Code SDK와 Open WebUI를 연결하는 파이프라인.
 
 ---
 
-## 8. TODO / Future Work
+## 8. SSG D Index
+
+로그인한 유저가 후보 리스트 중 어느 SSG 코드에 속하는지를 `user.d_index`에 저장하는 기능.
+접근 권한 체크(`SSG_DEPT_CODES`)와는 **별개의 후보 리스트**를 쓴다 — 권한 체크 리스트는
+더 굵은 단위라 그쪽 한 항목이 여기 여러 코드를 덮을 수 있고, 그 리스트는 접근 허용/차단만
+담당한다.
+
+### 환경변수
+- **`SSG_D_INDEX_CODES`** (JSON 배열, 순서가 의미를 가짐) - 후보 코드 리스트.
+  유저가 속한 **첫 번째** 코드의 1-based 위치가 `d_index`가 된다.
+  순서를 바꾸면 이미 저장된 index의 의미도 바뀌므로 주의.
+
+### 판정 시점: 매 로그인
+
+한 번만 판정하면 소속이 바뀐 유저가 옛 index로 **영구히** 라우팅되므로 (컬럼을 손으로
+비우는 것 말고는 고칠 방법이 없다), 로그인마다 다시 물어보고 값이 바뀌면 갱신한다.
+
+비용은 **첫 매치에서 조회를 중단**하므로 "그 유저의 코드 앞에 있는 후보 수"만큼의 SSO
+요청이다 — 후보를 전부 물어보는 건 어디에도 안 속한 유저뿐이다. 접근 권한 게이트는
+"전부 N"을 판단해야 하므로 조기 종료하지 않는다 (`stop_on_match` 옵트인).
+
+### 저장 값
+- `1..N` - 후보 리스트의 N번째 코드에 속함
+- `0` - 후보 리스트 중 어디에도 속하지 않음
+- `NULL` - **판정 불가. 저장하지 않고 다음 로그인에 재시도한다**
+
+`NULL`이 되는 경우는 셋이다. `d_index`가 문서 접근 범위를 고르는 값이므로, 애매한 답은
+쓰지 않고 기존 값을 남기는 쪽이 안전하다:
+
+1. 기능 미설정 (`SSG_D_INDEX_CODES` 없음 / `SSO_API_URL` 없음)
+2. **매칭된 코드보다 앞선 코드의 조회가 실패** — 실패한 그 코드가 리스트에서 더 앞이므로
+   그쪽이 진짜 매치였을 수 있고, 뒤에서 찾은 매치는 **틀린 index**일 수 있다
+3. 매치가 없는데 일부 코드가 응답하지 않음 — 그대로 `0`을 쓰면 "어디에도 안 속함"을
+   근거 없이 주장하게 된다
+
+### Backend
+- **`backend/open_webui/migrations/versions/d1a2b3c4e5f6_add_d_index_to_user_table.py`** (new)
+  - `user.d_index` (Integer, nullable) 추가. server default 없이 nullable이라
+    기존 행은 `NULL`로 남고, 다음 로그인 때 채워진다 (0으로 단정하지 않음)
+- **`backend/open_webui/models/users.py`** - `User.d_index` 컬럼 + `UserModel.d_index` 필드
+- **`backend/open_webui/config.py`** - `SSG_D_INDEX_CODES`
+- **`backend/open_webui/utils/oauth.py`**
+  - `query_sso_dept_membership(user_data, dept_codes, stop_on_match=False)` - 기존 SSO
+    조회 루프를 헬퍼로 추출 (권한 체크 블록도 이 헬퍼를 쓴다 — 게이트는 모든 응답이
+    필요하므로 `stop_on_match`를 쓰지 않는다)
+  - `resolve_d_index(user_data)` - `SSG_D_INDEX_CODES` 기준 index 판정, 첫 매치에서 중단
+  - OAuth 콜백: 신규 유저는 생성 직후 저장, 기존 유저는 **매 로그인 재판정**해서 값이
+    달라졌을 때만 갱신. index 판정은 절대 로그인을 막지 않는다
+
+### Gateway로 전달 (`X-OpenWebUI-User-D-Index`)
+
+`X-OpenWebUI-User-Id` 등과 같은 방식으로 헤더에 실어 보낸다. **미판정(`NULL`)이면
+헤더 자체를 붙이지 않는다** - 받는 쪽이 "아직 판정 안 됨"과 "어느 후보에도 안 속함(`0`)"을
+구분할 수 있게 하기 위함 (sentinel 값을 만들지 않는다).
+
+- **`backend/open_webui/env.py`** - `FORWARD_USER_INFO_HEADER_USER_D_INDEX`
+  (기본 `X-OpenWebUI-User-D-Index`)
+- **`backend/open_webui/utils/headers.py`** - `include_user_info_headers()`에 추가.
+  이 헬퍼가 유일한 choke point이므로 openai/ollama/terminals/retrieval/tools 등
+  기존 forwarding 경로 전부가 자동으로 이 헤더를 함께 보낸다
+  (기존 `ENABLE_FORWARD_USER_INFO_HEADERS` 플래그에 그대로 종속 - 기본값 `False`)
+- **`backend/open_webui/routers/openai.py`** - pipeline 모델용 `payload['user']`에
+  `d_index` 추가. 이 dict는 화이트리스트라서 명시하지 않으면 pipe가 볼 수 없다.
+  이 경로는 `ENABLE_FORWARD_USER_INFO_HEADERS`와 무관하게 항상 전달된다
+- **`pipelines_dev/*.py` (9개 pipe 전부)** - `extra_headers`에
+  `X-OpenWebUI-User-D-Index` 추가. `meta_headers`(core가 forward한 헤더)를 우선
+  보고, 없으면 `__user__["d_index"]`로 fallback - 기존 `X-OpenWebUI-User-Name`
+  블록과 동일한 패턴. `None`이면 헤더를 붙이지 않고, `0`은 그대로 보낸다
+
+---
+
+## 9. Sign Out All Users (전체 세션 무효화)
+
+관리자 패널에서 **모든 사용자의 세션을 한 번에 종료**하는 기능. `d_index`는 SSO 로그인
+콜백에서만 판정되므로, 이미 로그인해 있는 유저는 JWT가 만료될 때까지(기본 `4w`) 값이
+채워지지 않는다. 전원 재로그인을 강제하기 위해 필요.
+
+### 왜 새 메커니즘인가
+
+`utils/auth.py`의 기존 revocation 두 가지(`jti` per-token, `revoked_at` per-user)는
+**Redis 전용**이다 (`if request.app.state.redis:`). 이 배포에는 Redis가 없어서 둘 다
+no-op이므로, Redis 없이도 동작하는 방식이 필요했다 — **cutoff 시각 하나를 DB에 저장**하고
+그보다 이전에 발급된 토큰을 전부 거부한다 (토큰 목록을 관리하지 않으므로 O(1)).
+
+### 동작
+
+- `AUTH_SESSIONS_REVOKED_AT` (`PersistentConfig`, config path `auth.sessions_revoked_at`,
+  기본 `0` = 무효화 이력 없음). env 변수가 아니라 런타임 상태이며 `config` 테이블에 저장돼
+  재시작에도 유지된다. `AppConfig.__setattr__`가 DB 저장 + (Redis가 있으면) 미러링까지
+  자동 처리하므로 멀티 워커/레플리카에도 전파된다
+- `is_session_revoked(decoded, revoked_at)` - 토큰의 `iat <= cutoff`면 무효.
+  `iat`가 없는 토큰은 **발급 시각을 알 수 없으므로 무효로 간주**(fail closed, 기존 Redis
+  경로와 동일 규칙). cutoff가 파싱 불가면 **fail OPEN** — 잘못된 설정값 하나로 전원이
+  영구 잠기는 상황을 만들지 않는다. `iat`는 float로 비교한다 (초 단위로 잘라내면 cutoff와
+  같은 초에 갓 로그인한 유저를 불필요하게 한 번 더 튕긴다)
+- **API 키는 영향 없음** — `get_current_user`의 API 키 분기는 JWT 검증 전에 return하며,
+  API 키에는 `iat`가 없다
+
+### 적용 지점 (HTTP만 막으면 소켓으로 살아남는다)
+
+- `utils/auth.py: get_current_user` - 세션 토큰 전체. 기존 `jti` 체크보다 **앞에** 둔다
+  (`jti`가 없는 토큰도 걸러야 하므로)
+- `socket/main.py` - `decode_token` 4곳 전부 (connect + 3개 핸들러)
+- `routers/terminals.py` - 터미널 websocket 인증
+- `main.py: /api/config` - 무효 세션은 익명으로 처리 (로그인 전 config도 서비스하므로 401이 아님)
+
+### 엔드포인트 / UI
+
+- **`POST /api/v1/auths/admin/signout/all`** (`get_admin_user`) - cutoff을 현재 시각으로
+  기록하고 `{'revoked_at': <ts>}` 반환. **호출한 관리자 본인도 로그아웃된다**
+- **관리자 패널 → 설정 → 일반**, `JWT Expiration` 바로 아래에 버튼 + 확인 다이얼로그.
+  성공 시 로컬 토큰을 지우고 `/auth`로 이동 (본인 토큰도 죽었으므로)
+- 다른 유저는 다음 페이지 로드/새로고침 때 `+layout.svelte`의 기존 처리로 `/auth`로
+  리다이렉트된다. SPA 화면을 열어둔 상태에서는 새로고침 전까지 요청이 401로 실패한다
+- i18n 키 5개 (`en-US`, `ko-KR`)
+
+### 파일
+
+- `backend/open_webui/config.py`, `main.py`, `utils/auth.py`, `socket/main.py`,
+  `routers/auths.py`, `routers/terminals.py`
+- `src/lib/apis/auths/index.ts` (`signoutAllUsers`)
+- `src/lib/components/admin/Settings/General.svelte`
+- `src/lib/i18n/locales/{en-US,ko-KR}/translation.json`
+
+### 관리자 사용자 목록에 표시
+
+**관리자 패널 → 사용자** 테이블에 `D Index` 컬럼. Email 다음, Last Active 앞에 둔다
+(타임스탬프 뒤로 밀어내지 않고 신원 컬럼 옆에 붙임).
+
+세 상태를 **구분해서** 보여준다 — 롤아웃이 실제로 먹혔는지 관리자가 스캔할 수 있어야 한다:
+
+| 표시 | 의미 |
+|---|---|
+| `1`, `2`, … | 후보 리스트의 N번째 코드 |
+| muted `0` | 후보 중 어디에도 안 속함 (판정 완료) |
+| muted `–` | 아직 미판정 = **이 유저는 재로그인이 필요하다** |
+
+`0`과 `–`를 같은 모양으로 뭉개면 "전체 로그아웃이 먹혔는지"를 알 수 없다. 각각 tooltip로
+의미를 붙였다. 컬럼은 `tabular-nums` + 좌정렬 — 값이 크기가 아니라 명목 index이므로
+이웃 컬럼과 같은 축에 글리프를 세워 세로 스캔이 되게 한다.
+
+정렬도 지원한다 (`setSortKey('d_index')` + `models/users.py`의 `order_by` 화이트리스트에
+분기 추가). SQLite는 asc에서 NULL이 먼저 오므로 **오름차순 정렬이 곧 "재로그인 안 한
+사람 모아보기"** 가 된다.
+
+API 변경은 없다 — 목록 응답 모델 `UserGroupIdsModel`이 `UserModel`을 상속하므로
+`d_index`가 이미 내려온다.
+
+- `src/lib/components/admin/Users/UserList.svelte`, `backend/open_webui/models/users.py`,
+  i18n 키 3개
+
+---
+
+## 10. TODO / Future Work
 
 - **Confluence 인증 통합**: dscrowd.token_key 쿠키 자동 획득
   - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성 → pipe에 전달
