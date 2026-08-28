@@ -88,6 +88,7 @@
 	import Terminal from '../icons/Terminal.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
+	import ContextGauge from './MessageInput/ContextGauge.svelte';
 	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
@@ -1992,6 +1993,15 @@
 								</div>
 
 								<div class="self-end flex space-x-1 mr-1 shrink-0 gap-[0.5px]">
+									<!-- Context window usage gauge + File Manager badge: status
+									     indicators, so they stay visible while a response streams
+									     (unlike the action buttons, which swap for the stop button). -->
+									<ContextGauge {history} />
+
+									{#if terminalCapableModels.length > 0 && (($terminalServers ?? []).some((t) => t.id) || ((($_user?.role === 'admin' || ($_user?.permissions?.features?.direct_tool_servers ?? true)) && (($terminalServers ?? []).some((t) => !t.id) || ($settings?.terminalServers ?? []).some((s) => s.url)))))}
+										<TerminalMenu bind:show={showTerminalMenu} />
+									{/if}
+
 									{#if isActive && prompt === '' && files.length === 0}
 										<div class=" flex items-center">
 											<Tooltip content={$i18n.t('Stop')}>
@@ -2035,13 +2045,6 @@
 										{/if}
 
 										{#if !history?.currentId || history.messages[history.currentId]?.done == true}
-											<!-- Terminal Server Selector -->
-											{@const hasDirectToolServerAccess =
-												$_user?.role === 'admin' ||
-												($_user?.permissions?.features?.direct_tool_servers ?? true)}
-											{#if terminalCapableModels.length > 0 && (($terminalServers ?? []).some((t) => t.id) || (hasDirectToolServerAccess && (($terminalServers ?? []).some((t) => !t.id) || ($settings?.terminalServers ?? []).some((s) => s.url))))}
-												<TerminalMenu bind:show={showTerminalMenu} />
-											{/if}
 
 											{#if $_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true)}
 												<!-- {$i18n.t('Record voice')} -->

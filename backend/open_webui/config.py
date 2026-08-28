@@ -1818,6 +1818,12 @@ ENABLE_MESSAGE_RATING = PersistentConfig(
     os.environ.get('ENABLE_MESSAGE_RATING', 'True').lower() == 'true',
 )
 
+ENABLE_CONTEXT_USAGE = PersistentConfig(
+    'ENABLE_CONTEXT_USAGE',
+    'ui.enable_context_usage',
+    os.environ.get('ENABLE_CONTEXT_USAGE', 'True').lower() == 'true',
+)
+
 ENABLE_USER_WEBHOOKS = PersistentConfig(
     'ENABLE_USER_WEBHOOKS',
     'ui.enable_user_webhooks',

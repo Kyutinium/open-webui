@@ -1,7 +1,7 @@
 """
 title: Oh My Gateway
 author: claude-code-openai-wrapper
-version: 0.4.0
+version: 0.5.0
 description: .
     Oh My Gateway pipe connecting Open WebUI to the oh-my-gateway
     ``/v1/responses`` API. Derived from the stable
@@ -195,6 +195,10 @@ class Pipeline:
         MEMORY_UPDATE_PROMPT: bool = Field(
             default=True,
             description="Inject instruction telling Claude to update /tmp/workspaces/<MLM_USERNAME>/MEMORY.md (user-level, NOT pwd-local, NOT .claude/) before each final answer when admission criteria are met. Disable for read-only memory mode.",
+        )
+        CONTEXT_WINDOW_TOKENS: int = Field(
+            default=300000,
+            description="Model context window size for the UI context gauge (usage.context_tokens / this)",
         )
         TOOL_DISPLAY: bool = Field(
             default=True,
@@ -1132,6 +1136,37 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                                             yield "\n</thought>\n\n"
                                             response_tag_sent = True
                                         yield rendered
+
+                            # Context gauge marker. The gateway reports the
+                            # last model call's context-window occupancy as
+                            # usage.context_tokens (run-cumulative
+                            # input/output_tokens are useless for a gauge).
+                            # Emit it as a hidden details block; the frontend
+                            # parses it into the input-bar context gauge and
+                            # renders nothing inline.
+                            ctx_tokens = (resp_obj.get("usage") or {}).get(
+                                "context_tokens"
+                            )
+                            if ctx_tokens and not task:
+                                if thought_wrapped and not response_tag_sent:
+                                    if text_buffer:
+                                        yield text_buffer
+                                        text_buffer = ""
+                                    yield "\n</thought>\n\n"
+                                    response_tag_sent = True
+                                yield (
+                                    '\n\n<details type="context_usage" done="true">\n'
+                                    "<summary>Context</summary>\n"
+                                    + json.dumps(
+                                        {
+                                            "used": int(ctx_tokens),
+                                            "max": int(
+                                                self.valves.CONTEXT_WINDOW_TOKENS
+                                            ),
+                                        }
+                                    )
+                                    + "\n</details>\n"
+                                )
                             continue
 
                         if event_type == "response.failed":

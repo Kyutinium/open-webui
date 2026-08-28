@@ -1000,6 +1000,7 @@ async def get_admin_config(request: Request, user=Depends(get_admin_user)):
         'JWT_EXPIRES_IN': request.app.state.config.JWT_EXPIRES_IN,
         'ENABLE_COMMUNITY_SHARING': request.app.state.config.ENABLE_COMMUNITY_SHARING,
         'ENABLE_MESSAGE_RATING': request.app.state.config.ENABLE_MESSAGE_RATING,
+        'ENABLE_CONTEXT_USAGE': request.app.state.config.ENABLE_CONTEXT_USAGE,
         'ENABLE_FOLDERS': request.app.state.config.ENABLE_FOLDERS,
         'FOLDER_MAX_FILE_COUNT': request.app.state.config.FOLDER_MAX_FILE_COUNT,
         'AUTOMATION_MAX_COUNT': request.app.state.config.AUTOMATION_MAX_COUNT,
@@ -1038,6 +1039,7 @@ class AdminConfig(BaseModel):
     JWT_EXPIRES_IN: str
     ENABLE_COMMUNITY_SHARING: bool
     ENABLE_MESSAGE_RATING: bool
+    ENABLE_CONTEXT_USAGE: bool = True
     ENABLE_FOLDERS: bool
     FOLDER_MAX_FILE_COUNT: Optional[int | str] = None
     AUTOMATION_MAX_COUNT: Optional[int | str] = None
@@ -1126,6 +1128,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
 
     request.app.state.config.ENABLE_COMMUNITY_SHARING = form_data.ENABLE_COMMUNITY_SHARING
     request.app.state.config.ENABLE_MESSAGE_RATING = form_data.ENABLE_MESSAGE_RATING
+    request.app.state.config.ENABLE_CONTEXT_USAGE = form_data.ENABLE_CONTEXT_USAGE
 
     request.app.state.config.ENABLE_USER_WEBHOOKS = form_data.ENABLE_USER_WEBHOOKS
     request.app.state.config.ENABLE_USER_STATUS = form_data.ENABLE_USER_STATUS
@@ -1156,6 +1159,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         'JWT_EXPIRES_IN': request.app.state.config.JWT_EXPIRES_IN,
         'ENABLE_COMMUNITY_SHARING': request.app.state.config.ENABLE_COMMUNITY_SHARING,
         'ENABLE_MESSAGE_RATING': request.app.state.config.ENABLE_MESSAGE_RATING,
+        'ENABLE_CONTEXT_USAGE': request.app.state.config.ENABLE_CONTEXT_USAGE,
         'ENABLE_FOLDERS': request.app.state.config.ENABLE_FOLDERS,
         'FOLDER_MAX_FILE_COUNT': request.app.state.config.FOLDER_MAX_FILE_COUNT,
         'AUTOMATION_MAX_COUNT': request.app.state.config.AUTOMATION_MAX_COUNT,

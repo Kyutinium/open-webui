@@ -686,6 +686,8 @@
 		{/if}
 	{:else if token.type === 'details' && token?.attributes?.type === 'image_gallery'}
 		<!-- Image Gallery: no visible button, handled via ToolExplorer thumbnail click -->
+	{:else if token.type === 'details' && token?.attributes?.type === 'context_usage'}
+		<!-- Context usage marker: consumed by the input-bar context gauge, nothing to render -->
 	{:else if token.type === 'details' && token?.attributes?.type === 'ask_user_question'}
 		<!-- AskUserQuestion: interactive card with clickable options -->
 		{@const questionData = (() => {
