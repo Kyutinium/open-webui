@@ -352,7 +352,30 @@ Open WebUI 이미지 재빌드 없이 pipelines 컨테이너 재시작만으로 
 
 ## 11. TODO / Future Work
 
-- **Confluence 인증 통합**: dscrowd.token_key 쿠키 자동 획득
-  - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성 → pipe에 전달
+- **Confluence 인증 통합**: dscrowd.token_key 쿠키 **자동 획득**
+  - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성
   - 백엔드 프록시 엔드포인트 필요 (`/api/v1/confluence/check-token`)
-  - 현재: dscrowd.token_key가 pipe에 전달되지 않음 (유저가 프롬프트에 직접 입력 중)
+  - 남은 것은 **획득**뿐이다. 전달 플럼빙은 이미 동작한다 (아래) — 사용자
+    브라우저에 Confluence 세션이 이미 있을 때만 쿠키가 존재하는 것이 제약이다
+
+### dscrowd.token_key 전달 경로 (동작 중)
+
+이 문서에 한동안 "pipe에 전달되지 않음 (유저가 프롬프트에 직접 입력 중)"이라고
+적혀 있었는데 **사실과 다르다.** 실제 경로는 넷이다:
+
+1. `backend/open_webui/utils/middleware.py` — `request.cookies["dscrowd.token_key"]`를
+   읽어 `metadata["headers"]["x-cookie-dscrowd.token_key"]`에 넣는다
+2. `pipelines_dev/oh_my_gateway_pipe.py` — 그것을 받아
+   `extra_headers["X-Cookie-dscrowd.token_key"]`로 gateway에 전달한다
+3. 같은 pipe — `INJECT_CREDENTIALS` valve(**기본 True**)면
+   `<dscrowd.token_key>…</dscrowd.token_key>`를 **프롬프트 본문에도** 주입한다
+4. `backend/open_webui/routers/auq.py` — AUQ 답변 경로도 같은 계약으로 싣는다
+
+gateway 쪽은 `MCP_FORWARD_CONTEXT` 템플릿의
+`{{header:X-Cookie-dscrowd.token_key}}`가 2·4의 헤더를 읽어 MCP 서버로 넘긴다.
+
+⚠️ **3번은 옮기지 말 것.** 살아 있는 세션 토큰이 어시스턴트 메시지 텍스트에
+영속되고, 이후 그 텍스트를 읽는 모든 경로(제목 생성·요약·공유 링크)로 함께
+흘러간다. 헤더 경로(2번)만으로 MCP 인증은 충분하다. ChatDRAGON_UI로 이식할 때는
+헤더 경로만 옮겼다 (`request_credentials.CallerCredentialMiddleware` +
+`GatewayClient._headers`).
