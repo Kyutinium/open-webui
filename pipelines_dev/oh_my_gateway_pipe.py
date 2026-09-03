@@ -120,6 +120,37 @@ def _is_tool_noise(text: str) -> bool:
     return bool(text) and _TOOL_NOISE_RE.match(text) is not None
 
 
+# Absolute ceiling on inlined tool text, applied even when the valve limit is
+# disabled (0).  Without it a single multi-megabyte MCP result would be shipped
+# to the browser verbatim and parsed on every streaming frame.
+_TOOL_CONTENT_HARD_LIMIT = 10000
+
+
+def _truncate_tool_content(text: str, limit: int) -> str:
+    """Shorten tool ``arguments``/``result`` text for the inline tool block.
+
+    Why this is not merely cosmetic: the pipe inlines both into the assistant
+    message as attributes on a ``<details type="tool_calls">`` block, so every
+    character (a) is stored in the message body, (b) is re-lexed by Open
+    WebUI's markdown pass on every animation frame while the turn streams, and
+    (c) is re-lexed again on every reload of that chat.  An agentic turn with
+    dozens of MCP calls therefore grows the per-frame parse cost with the
+    square of the turn length, which is what freezes the browser.  Keeping the
+    inlined preview short is the only fix that removes the cost rather than
+    hiding it.
+
+    ``limit <= 0`` means "no valve limit" and falls back to
+    :data:`_TOOL_CONTENT_HARD_LIMIT`.  The dropped length is reported so the
+    user can tell a truncated preview from a genuinely short result.
+    """
+    if not text:
+        return text
+    cap = limit if limit > 0 else _TOOL_CONTENT_HARD_LIMIT
+    if len(text) <= cap:
+        return text
+    return f"{text[:cap]}… (truncated, {len(text):,} chars total)"
+
+
 def _safe_attr(value: str) -> str:
     """Sanitize a string for use inside a double-quoted HTML attribute.
 
@@ -204,6 +235,20 @@ class Pipeline:
             default=False,
             description="Only display MCP tool results; hide all built-in SDK tools (Read, Bash, Edit, etc.)",
         )
+        TOOL_CONTENT_MAX_CHARS: int = Field(
+            default=200,
+            description=(
+                "Max characters of a tool call's arguments and result inlined "
+                "into the chat message (default 200). This text is embedded in "
+                "the assistant message body, so Open WebUI re-parses ALL of it "
+                "on every streaming frame and again on every chat reload — a "
+                "large value is what wedges the browser on agentic turns with "
+                "many MCP calls. 0 disables the limit and falls back to the "
+                f"{_TOOL_CONTENT_HARD_LIMIT}-char hard cap. Overridable per "
+                "request by the client's 'tool_content_limit' field, so the "
+                "chat UI setting wins over this default."
+            ),
+        )
         VQA_IMAGE_DIR: str = Field(
             default="/app/shared_images",
             description="Shared directory for saving uploaded images (must be mounted in both Open WebUI and gateway containers)",
@@ -223,11 +268,79 @@ class Pipeline:
                 return v.lower() not in ("simple", "mcp_only", "false", "0", "no", "off")
             return v
 
+        @field_validator("TOOL_CONTENT_MAX_CHARS", mode="before")
+        @classmethod
+        def _coerce_tool_content_max_chars(cls, v):
+            """Accept blank/garbage values from the admin valve form.
+
+            The Pipelines valve UI submits strings, and an emptied number field
+            arrives as ``""`` — which would otherwise 422 the whole valve
+            update and leave every other valve unsaved.
+            """
+            if v is None or (isinstance(v, str) and not v.strip()):
+                return 200
+            try:
+                return max(0, int(str(v).strip()))
+            except (TypeError, ValueError):
+                return 200
+
     def __init__(self):
         self.valves = self.Valves()
         self._local = threading.local()
         # Track previous_response_id per chat for multi-turn continuity
         self._response_ids: dict[str, str] = {}
+
+    # ------------------------------------------------------------------
+    # Inlined tool-content limit
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _coerce_content_limit(value) -> Optional[int]:
+        """Normalize a client-supplied ``tool_content_limit`` to an int >= 0.
+
+        Returns ``None`` for anything unusable so the caller falls back to the
+        valve instead of silently treating garbage as 0 (= unlimited), which
+        would turn a typo in the UI into the very browser hang this limit
+        exists to prevent.  ``bool`` is rejected explicitly because it is an
+        ``int`` subclass and ``True`` would otherwise mean "1 character".
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_tool_content_limit(self, body: dict, metadata: dict) -> int:
+        """Pick this request's inlined-tool-content limit.
+
+        Precedence: the per-user chat UI setting (``tool_content_limit``, sent
+        by Chat.svelte from ``settings.toolContentLimit``) over the admin valve
+        default.  Resolved once per turn and stashed on the thread-local so the
+        render path doesn't have to thread it through every call site (same
+        pattern as ``_persisted_map``).
+        """
+        limit = self._coerce_content_limit(body.get("tool_content_limit"))
+        if limit is None:
+            limit = self._coerce_content_limit(metadata.get("tool_content_limit"))
+        if limit is None:
+            limit = self._coerce_content_limit(self.valves.TOOL_CONTENT_MAX_CHARS)
+        if limit is None:
+            limit = 200
+        self._local.tool_content_limit = limit
+        return limit
+
+    def _tool_content_limit(self) -> int:
+        """This turn's resolved limit, falling back to the valve.
+
+        The fallback matters if a generator is resumed on a thread that never
+        ran :meth:`_resolve_tool_content_limit` — better the admin default than
+        an accidental "unlimited".
+        """
+        limit = getattr(self._local, "tool_content_limit", None)
+        if limit is None:
+            limit = self._coerce_content_limit(self.valves.TOOL_CONTENT_MAX_CHARS)
+        return 200 if limit is None else limit
 
     def pipes(self) -> list:
         return [
@@ -713,6 +826,10 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
         __metadata__ = body.get("metadata", {})
         __task__ = __metadata__.get("task")
 
+        # Resolve the inlined tool-content limit once per turn (chat UI setting
+        # > admin valve) before any tool block is rendered.
+        content_limit = self._resolve_tool_content_limit(body, __metadata__)
+        log.info("[PIPE] tool_content_limit=%s", content_limit)
 
         meta_headers = __metadata__.get("headers", {})
         log.info("[PIPE-DEBUG] body keys=%s", list(body.keys()))
@@ -1661,7 +1778,8 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 m = re.search(r"\(([0-9,]+) characters?\)", result_content)
                 chars = m.group(1) if m else "large"
                 result_content = f"Result truncated ({chars} chars)"
-            result_content = result_content[:10000]
+            content_limit = self._tool_content_limit()
+            result_content = _truncate_tool_content(result_content, content_limit)
             # Friendly display name (e.g. "knowledge base", "document search
             # MyDB") so the inline "View Result from **NAME**" UI is readable.
             # Falls back to the raw name for tools without a registered label.
@@ -1702,7 +1820,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                 friendly = self._friendly_tool_notification(name, is_error)
                 details_tag = f"\n> {friendly}\n"
             else:
-                safe_args = _safe_attr(args)
+                safe_args = _safe_attr(_truncate_tool_content(args, content_limit))
                 safe_result = _safe_attr(result_content)
                 details_tag = (
                     f'\n\n<details type="tool_calls"'

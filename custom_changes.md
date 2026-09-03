@@ -288,7 +288,69 @@ API 변경은 없다 — 목록 응답 모델 `UserGroupIdsModel`이 `UserModel`
 
 ---
 
-## 10. TODO / Future Work
+## 10. Tool Content Truncation (브라우저 프리즈 완화)
+
+에이전틱 턴에서 사용자 브라우저가 먹통이 되는 문제의 1차 원인 제거.
+
+### 원인
+
+pipe는 tool_result마다 `<details type="tool_calls" arguments="..." result="...">`를
+**어시스턴트 메시지 본문에** 넣는다. `Markdown.svelte`의 `parseTokens()`는 증분 파싱이
+아니라 **본문 전체**를 rAF마다 `marked.lexer()`로 다시 렉싱하므로, 프레임당 비용이 본문
+길이에 비례하고 턴 전체 비용은 그 **제곱**이 된다. MCP 호출 30~50번이면 메시지 하나가
+수백 KB가 되어 메인 스레드가 포화된다. 본문은 그대로 저장되므로 **그 채팅을 다시 열기만
+해도** 같은 비용이 재생된다.
+
+증폭 요인 (모두 매 프레임): `ToolCallDisplay`의 `$: parsedArgs`/`$: parsedResult`는
+접힌 상태에서도 전체 문자열에 `decode()` + 재귀 `parseJSONString()`을 돌리고,
+`MarkdownTokens`는 reasoning 블록마다 템플릿 안에서 중첩 `marked.lexer()`를 호출하며,
+`processChineseContent`는 CJK 한자가 하나라도 있으면 (Confluence/MLM 결과에 흔함)
+본문을 줄 단위로 쪼개 정규식을 돌린다.
+
+원본 open-webui가 멀쩡한 이유는 렌더러가 달라서가 아니라 `n`이 작기 때문이다 — 평범한
+메시지는 산문 몇 KB에 작은 도구 결과 0~2개다. 포크의 차이는 **gateway pipe가 에이전틱
+도구 페이로드를 그 본문 채널로 밀어넣는다는 것**이다.
+
+### Pipe
+
+`n`을 직접 줄이는 유일한 지점이라, 위의 증폭 요인이 전부 비례해서 같이 줄어든다.
+Open WebUI 이미지 재빌드 없이 pipelines 컨테이너 재시작만으로 배포된다.
+
+- **`pipelines_dev/oh_my_gateway_pipe.py`**, **`pipelines_dev/oh_my_gateway_pipe_ragaas.py`**
+  - `TOOL_CONTENT_MAX_CHARS` valve (기본 200). `arguments`와 `result` **양쪽**에 적용.
+    이전에는 result만 `[:10000]`이었고 **args는 캡이 없었다** (Write/Edit 호출은 파일
+    전체가 HTML 속성으로 들어갔다)
+  - `0` = valve 해제. 단 `_TOOL_CONTENT_HARD_LIMIT`(10000)은 항상 남는다 — 폭주한 결과
+    하나가 브라우저에 통째로 실려가는 것을 막는 마지막 방어선
+  - 잘린 자리에 `… (truncated, 40,000 chars total)` — 200자 프리뷰와 실제로 짧은 결과를
+    구분할 수 있어야 한다
+  - `_coerce_tool_content_max_chars` — valve 폼은 문자열을 보내고 빈칸은 `""`로 온다.
+    coerce하지 않으면 422가 나면서 **다른 valve 저장까지 함께 날아간다**
+  - `body.tool_content_limit`(클라이언트) > valve 순서. 턴 시작에 한 번 해석해
+    thread-local에 둔다 (`_persisted_map`과 같은 패턴). **쓸 수 없는 값은 valve로
+    폴백하고 절대 "무제한"으로 떨어지지 않는다** — UI 오타 하나가 이 제한이 막으려는
+    바로 그 프리즈를 되살리면 안 되므로. `bool`은 `int` 서브클래스라서 명시적으로 거부
+    (`True`가 "1자"가 되면 안 된다)
+- **`pipelines_dev/tests/test_oh_my_gateway_pipe_tool_content.py`** (new) — 트렁케이션
+  경계 + 폴백 순서. `test_..._stall.py`와 같이 stdlib만 쓰고 ast로 헬퍼를 추출한다
+
+### 남은 것
+
+- **이미 저장된 옛 채팅은 그대로 무겁다.** 트렁케이션은 새 턴에만 적용된다
+- **사용자별 조절은 아직 없다.** 외부 pipelines 서버의 pipe에는 `UserValves`가 붙지
+  않으므로 (native Function/Tool만 지원) `body.tool_content_limit` 훅을 미리 뚫어뒀다 —
+  프론트에서 `mcp_tools`와 같은 방식으로 실어 보내면 된다. 현재는 관리자만
+  (관리자 패널 → 설정 → Pipelines)
+- `tool_explorer` 사이드바 본문은 이 valve 밖이다. 결과당 content는 이미 200자지만
+  **호출당 결과 개수에 상한이 없어서** 검색이 100건 물어오면 본문에 여전히 수십 KB
+- `ConsecutiveDetailsGroup`은 reasoning이 있는 그룹이 pending이면 자동 펼침 →
+  스트리밍 중 모든 도구 `<pre>`가 마운트된다
+- `ToolCallDisplay.parseJSONString`은 숫자 문자열에 무한 재귀한다
+  (`JSON.parse(123)` → `123` → …). RangeError로 풀리지만 호출마다 스택 1만 프레임
+
+---
+
+## 11. TODO / Future Work
 
 - **Confluence 인증 통합**: dscrowd.token_key 쿠키 자동 획득
   - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성 → pipe에 전달
