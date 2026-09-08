@@ -8,11 +8,13 @@
 	import General from './General.svelte';
 	import Permissions from './Permissions.svelte';
 	import Users from './Users.svelte';
+	import ApiKeys from './ApiKeys.svelte';
 	import { DEFAULT_PERMISSIONS } from '$lib/constants/permissions';
 	import UserPlusSolid from '$lib/components/icons/UserPlusSolid.svelte';
 	import WrenchSolid from '$lib/components/icons/WrenchSolid.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
+	import Key from '$lib/components/icons/Key.svelte';
 
 	export let onSubmit: Function = () => {};
 	export let onDelete: Function = () => {};
@@ -25,7 +27,7 @@
 
 	export let custom = true;
 
-	export let tabs = ['general', 'permissions', 'users'];
+	export let tabs = ['general', 'permissions', 'users', 'api_keys'];
 
 	let selectedTab = 'general';
 	let loading = false;
@@ -195,6 +197,24 @@
 									<div class=" self-center">{$i18n.t('Users')}</div>
 								</button>
 							{/if}
+
+							{#if tabs.includes('api_keys') && group?.id}
+								<button
+									class="px-0.5 py-1 max-w-fit w-fit rounded-lg flex-1 lg:flex-none flex text-right transition {selectedTab ===
+									'api_keys'
+										? ''
+										: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
+									on:click={() => {
+										selectedTab = 'api_keys';
+									}}
+									type="button"
+								>
+									<div class=" self-center mr-2">
+										<Key className="size-4" />
+									</div>
+									<div class=" self-center">{$i18n.t('API Keys')}</div>
+								</button>
+							{/if}
 						</div>
 
 						<div class="flex-1 mt-1 lg:mt-1 lg:h-[30rem] lg:max-h-[30rem] flex flex-col">
@@ -213,6 +233,8 @@
 									<Permissions bind:permissions {defaultPermissions} />
 								{:else if selectedTab == 'users'}
 									<Users bind:userCount groupId={group?.id} />
+								{:else if selectedTab == 'api_keys'}
+									<ApiKeys groupId={group?.id} />
 								{/if}
 							</div>
 

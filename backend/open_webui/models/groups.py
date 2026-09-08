@@ -428,6 +428,13 @@ class GroupTable:
 
     async def delete_group_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
         try:
+            # Revoke the group's shared API keys and drop its service account
+            # before the group row goes away, so neither can outlive the group.
+            # Imported here to avoid a circular import at module load.
+            from open_webui.utils.group_api_key import delete_group_service_account
+
+            await delete_group_service_account(id, db=db)
+
             async with get_async_db_context(db) as db:
                 await db.execute(delete(Group).filter_by(id=id))
                 await db.commit()
