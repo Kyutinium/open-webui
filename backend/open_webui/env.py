@@ -252,6 +252,17 @@ except Exception:
 # only confuse users. Set to 'true' where uploads actually work.
 ENABLE_FILE_UPLOAD_UI = os.environ.get('ENABLE_FILE_UPLOAD_UI', 'false').lower() == 'true'
 
+# Narrows ENABLE_FILE_UPLOAD_UI to the File Manager. With both set, the File
+# Manager's upload button and drop zone work while the chat composer's upload
+# affordances ("Upload Files", chat-pane drop) stay hidden, so files land in the
+# workspace instead of the chat pipeline. Has no effect while
+# ENABLE_FILE_UPLOAD_UI is off - that already hides every upload affordance.
+# This governs the UI only: clipboard/capture/Drive imports are untouched, and
+# the upload endpoint itself is not gated here (see the File Manager server).
+FILE_UPLOAD_UI_FILE_MANAGER_ONLY = (
+    os.environ.get('FILE_UPLOAD_UI_FILE_MANAGER_ONLY', 'false').lower() == 'true'
+)
+
 # Header names for user info forwarding (customizable via environment variables)
 FORWARD_USER_INFO_HEADER_USER_NAME = os.environ.get('FORWARD_USER_INFO_HEADER_USER_NAME', 'X-OpenWebUI-User-Name')
 FORWARD_USER_INFO_HEADER_USER_ID = os.environ.get('FORWARD_USER_INFO_HEADER_USER_ID', 'X-OpenWebUI-User-Id')

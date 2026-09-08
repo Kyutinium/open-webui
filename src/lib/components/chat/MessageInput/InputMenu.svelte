@@ -2,7 +2,14 @@
 	import { getContext, onMount, tick } from 'svelte';
 	import { fly } from 'svelte/transition';
 
-	import { config, user, tools as _tools, mobile, knowledge } from '$lib/stores';
+	import {
+		config,
+		user,
+		tools as _tools,
+		mobile,
+		knowledge,
+		chatFileUploadUiEnabled
+	} from '$lib/stores';
 	import { getKnowledgeBases } from '$lib/apis/knowledge';
 
 	import { createPicker } from '$lib/utils/google-drive-picker';
@@ -130,7 +137,7 @@
 		>
 			{#if tab === ''}
 				<div in:fly={{ x: -20, duration: 150 }}>
-					{#if $config?.features?.enable_file_upload_ui ?? false}
+					{#if $chatFileUploadUiEnabled}
 						<Tooltip
 							content={fileUploadCapableModels.length !== selectedModels.length
 								? $i18n.t('Model(s) do not support file upload')
