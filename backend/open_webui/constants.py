@@ -69,6 +69,13 @@ class ERROR_MESSAGES(str, Enum):
     OLLAMA_NOT_FOUND = 'WebUI could not connect to Ollama'
     CREATE_API_KEY_ERROR = 'Oops! Something went wrong while creating your API key. Please try again later. If the issue persists, contact support for assistance.'
     API_KEY_CREATION_NOT_ALLOWED = 'API key creation is not allowed in the environment.'
+    GROUP_SERVICE_ACCOUNT_DRIFT = (
+        'This group API key is disabled because its group service account no longer meets the '
+        "required conditions. An administrator should check the account's role and group membership."
+    )
+    GROUP_SERVICE_ACCOUNT_NOT_INTERACTIVE = (
+        'This account is a group API service account and cannot be signed in to or modified.'
+    )
 
     EMPTY_CONTENT = 'The content provided is empty. Please ensure that there is text or data present before proceeding.'
 

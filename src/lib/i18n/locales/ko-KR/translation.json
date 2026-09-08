@@ -1263,6 +1263,7 @@
 	"Manage Pipelines": "파이프라인 관리",
 	"Manage Tool Servers": "도구 서버 관리",
 	"Manage your account information.": "계정 정보를 관리하세요.",
+	"Managed by the group as its API service account.": "이 그룹의 API 서비스 계정으로, 그룹이 직접 관리합니다.",
 	"March": "3월",
 	"Markdown": "마크다운",
 	"Markdown Header Text Splitter": "",

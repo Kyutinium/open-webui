@@ -9,6 +9,7 @@ engines at import time.
 import os
 import tempfile
 import time
+import urllib.parse
 import uuid
 
 import pytest
@@ -25,22 +26,34 @@ from types import SimpleNamespace  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
-from open_webui.internal.db import Base, engine  # noqa: E402
+from open_webui.constants import ERROR_MESSAGES  # noqa: E402
+
+from open_webui.internal.db import Base, engine, get_async_db_context  # noqa: E402
+import open_webui.routers.auths as routers_auths  # noqa: E402
 import open_webui.routers.groups as routers_groups  # noqa: E402
+import open_webui.routers.users as routers_users  # noqa: E402
+import open_webui.utils.oauth as oauth_module  # noqa: E402
+
+# Importing the routers above pulls in tables whose foreign keys point at models
+# nothing else here imports; `Base.metadata` has to know all of them before
+# create_all/drop_all can resolve them.
+import open_webui.models.messages  # noqa: E402,F401
 from open_webui.models.group_api_keys import (  # noqa: E402
     GROUP_API_KEY_PREFIX,
+    GROUP_SERVICE_ACCOUNT_INFO_KEY,
     MAX_GROUP_API_KEYS,
     GroupApiKeyForm,
     GroupApiKeys,
     key_hint,
 )
-from open_webui.models.groups import GroupForm, Groups  # noqa: E402
-from open_webui.models.users import Users  # noqa: E402
+from open_webui.models.groups import GroupForm, GroupMember, Groups  # noqa: E402
+from open_webui.models.users import UserUpdateForm, Users  # noqa: E402
 from open_webui.utils.auth import get_current_user_by_api_key  # noqa: E402
 from open_webui.utils.group_api_key import (  # noqa: E402
     create_group_api_key,
     ensure_group_service_account,
     group_service_account_id,
+    is_group_service_account,
 )
 
 
@@ -79,6 +92,34 @@ def _request(
             )
         ),
     )
+
+
+def _async_return(value):
+    async def _call(*args, **kwargs):
+        return value
+
+    return _call
+
+
+async def _force_group_membership(group_id: str, user_id: str):
+    """Write a membership row past the model-layer guard.
+
+    Simulates drift that arrived some other way (a direct DB edit, a migration,
+    a future caller) so the per-request check is proven to stand on its own.
+    """
+    import time as _time
+
+    async with get_async_db_context() as db:
+        db.add(
+            GroupMember(
+                id=str(uuid.uuid4()),
+                group_id=group_id,
+                user_id=user_id,
+                created_at=int(_time.time()),
+                updated_at=int(_time.time()),
+            )
+        )
+        await db.commit()
 
 
 async def _make_group(name='Team'):
@@ -298,3 +339,157 @@ async def test_create_endpoint_caps_the_number_of_keys_per_group():
             _request(), group.id, GroupApiKeyForm(), user=_admin(), db=None
         )
     assert exc.value.status_code == 400
+
+
+####################
+# Service-account boundary
+#
+# The isolation of a service account must be an enforced invariant, not an
+# inference from "it has no auth row". These cover the three enforcement points:
+# interactive login, group membership, and per-request validation.
+####################
+
+
+async def test_service_account_is_marked_explicitly():
+    group = await _make_group('Mike')
+    account = await ensure_group_service_account(group)
+
+    assert is_group_service_account(account)
+    assert account.info[GROUP_SERVICE_ACCOUNT_INFO_KEY] == {'group_id': group.id}
+    # An ordinary user is not caught by any of the three signals.
+    owner = await Users.get_user_by_id(group.user_id)
+    assert not is_group_service_account(owner)
+
+
+async def test_service_account_cannot_be_signed_in_to():
+    group = await _make_group('November')
+    account = await ensure_group_service_account(group)
+
+    # The choke point behind signin / LDAP / signup / admin-add / token exchange.
+    with pytest.raises(HTTPException) as exc:
+        await routers_auths.create_session_response(_request(), account, None)
+    assert exc.value.status_code == 403
+
+
+async def test_oauth_merge_by_email_cannot_bind_to_a_service_account(monkeypatch):
+    """An IdP principal presenting the account's login id must not adopt it.
+
+    OAuth is the one login path that reaches an existing user row without any
+    `auth` row: with merge-by-email on it looks the user up, writes the oauth
+    sub onto it and issues a JWT itself.
+    """
+    group = await _make_group('Oscar')
+    account = await ensure_group_service_account(group)
+    sub = f'attacker-{uuid.uuid4().hex}'
+
+    manager = oauth_module.OAuthManager(app=SimpleNamespace(state=SimpleNamespace()))
+    monkeypatch.setattr(
+        manager,
+        'get_client',
+        lambda provider: SimpleNamespace(
+            authorize_access_token=_async_return(
+                {
+                    'access_token': 'token',
+                    # The IdP claims the service account's stored login id.
+                    'userinfo': {'sub': sub, 'email': account.email, 'preferred_username': account.email},
+                }
+            )
+        ),
+    )
+    monkeypatch.setitem(oauth_module.OAUTH_PROVIDERS, 'oidc', {'sub_claim': 'sub'})
+    monkeypatch.setattr(oauth_module.auth_manager_config, 'OAUTH_MERGE_ACCOUNTS_BY_EMAIL', True)
+    monkeypatch.setattr(oauth_module.auth_manager_config, 'OAUTH_EMAIL_CLAIM', 'email')
+    monkeypatch.setattr(oauth_module.auth_manager_config, 'OAUTH_USERNAME_CLAIM', 'preferred_username')
+    monkeypatch.setattr(oauth_module.auth_manager_config, 'OAUTH_ALLOWED_DOMAINS', ['*'])
+    monkeypatch.setattr(oauth_module.auth_manager_config, 'OAUTH_SUB_CLAIM', None)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(config=SimpleNamespace(WEBUI_URL='http://localhost'))),
+        base_url='http://localhost',
+    )
+    result = await manager.handle_callback(request, 'oidc', response=SimpleNamespace(headers={}))
+
+    # The callback turns the rejection into an error redirect, and it is the
+    # service-account rejection specifically — not some earlier failure.
+    location = str(result.headers.get('location', ''))
+    assert urllib.parse.quote_plus(ERROR_MESSAGES.GROUP_SERVICE_ACCOUNT_NOT_INTERACTIVE) in location
+    # ... and, more importantly, nothing was bound to the account.
+    assert await Users.get_user_by_oauth_sub('oidc', sub) is None
+    assert (await Users.get_user_by_id(account.id)).oauth in (None, {})
+
+
+async def test_service_account_membership_is_pinned_to_its_own_group():
+    group = await _make_group('Papa')
+    other = await _make_group('Quebec')
+    account = await ensure_group_service_account(group)
+
+    # It cannot be added to another group ...
+    await Groups.add_users_to_group(other.id, [account.id])
+    assert account.id not in await Groups.get_group_user_ids_by_id(other.id)
+
+    # ... nor removed from its own ...
+    await Groups.remove_users_from_group(group.id, [account.id])
+    assert account.id in await Groups.get_group_user_ids_by_id(group.id)
+
+    # ... nor evicted / imported by a wholesale membership replace.
+    await Groups.set_group_user_ids_by_id(group.id, [])
+    assert account.id in await Groups.get_group_user_ids_by_id(group.id)
+
+    await Groups.set_group_user_ids_by_id(other.id, [account.id])
+    assert account.id not in await Groups.get_group_user_ids_by_id(other.id)
+
+    # A group that never issued a key gains no membership row for a user that
+    # does not exist.
+    fresh = await _make_group('Romeo')
+    await Groups.set_group_user_ids_by_id(fresh.id, [])
+    assert await Groups.get_group_user_ids_by_id(fresh.id) == []
+
+
+async def test_group_key_is_blocked_when_its_account_drifts():
+    group = await _make_group('Sierra')
+    service_account, api_key = await _issue_key(group)
+
+    # Baseline: the key works.
+    assert await get_current_user_by_api_key(_request(), api_key.key) is not None
+
+    # Role escalation must not be inherited by keys already in circulation.
+    await Users.update_user_by_id(service_account.id, {'role': 'admin'})
+    with pytest.raises(HTTPException) as exc:
+        await get_current_user_by_api_key(_request(), api_key.key)
+    assert exc.value.status_code == 403
+
+    await Users.update_user_by_id(service_account.id, {'role': 'user'})
+    assert await get_current_user_by_api_key(_request(), api_key.key) is not None
+
+    # Nor extra group membership, however it got written.
+    other = await _make_group('Tango')
+    await Groups.add_users_to_group(other.id, [service_account.id], db=None)
+    await _force_group_membership(other.id, service_account.id)
+    with pytest.raises(HTTPException) as exc:
+        await get_current_user_by_api_key(_request(), api_key.key)
+    assert exc.value.status_code == 403
+
+
+async def test_group_key_is_blocked_when_it_points_at_a_foreign_user():
+    group = await _make_group('Uniform')
+    service_account, api_key = await _issue_key(group)
+
+    outsider_id = str(uuid.uuid4())
+    await Users.insert_new_user(id=outsider_id, name='Outsider', email=f'{outsider_id}@example.com', role='admin')
+    # Simulate a tampered/legacy row pointing at somebody else's account.
+    await GroupApiKeys.delete_key_by_id(api_key.id)
+    rebound = await GroupApiKeys.insert_new_key(group_id=group.id, user_id=outsider_id, key=create_group_api_key())
+
+    with pytest.raises(HTTPException) as exc:
+        await get_current_user_by_api_key(_request(), rebound.key)
+    assert exc.value.status_code == 403
+
+
+async def test_admin_user_update_cannot_touch_a_service_account():
+    group = await _make_group('Victor')
+    account = await ensure_group_service_account(group)
+
+    with pytest.raises(HTTPException) as exc:
+        await routers_users.update_user_by_id(account.id, UserUpdateForm(role='admin'), session_user=_admin(), db=None)
+    assert exc.value.status_code == 403
+    assert (await Users.get_user_by_id(account.id)).role == 'user'

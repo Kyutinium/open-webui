@@ -76,6 +76,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.access_control import get_permissions, has_permission
 from open_webui.utils.groups import apply_default_group_assignment
+from open_webui.utils.group_api_key import is_group_service_account
 
 from open_webui.utils.redis import get_redis_client
 from open_webui.utils.rate_limit import RateLimiter
@@ -111,6 +112,16 @@ async def create_session_response(
         response: FastAPI response object (required if set_cookie is True)
         set_cookie: Whether to set the auth cookie on the response
     """
+    # A group API service account is a credential holder, never an interactive
+    # identity. This is the choke point every non-OAuth login path funnels
+    # through, so the rejection lives here rather than in each of them. (The
+    # OAuth callback issues its own token and carries the same guard.)
+    if is_group_service_account(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.GROUP_SERVICE_ACCOUNT_NOT_INTERACTIVE,
+        )
+
     expires_delta = parse_duration(request.app.state.config.JWT_EXPIRES_IN)
     expires_at = None
     if expires_delta:

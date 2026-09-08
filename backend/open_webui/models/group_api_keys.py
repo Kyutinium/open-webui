@@ -28,6 +28,38 @@ GROUP_API_KEY_PREFIX = 'sk-grp-'
 # Upper bound on live keys per group, so a rotation loop cannot grow unbounded.
 MAX_GROUP_API_KEYS = 20
 
+####################
+# Service account identity
+#
+# These are deliberately pure (no user/group imports) so the membership layer in
+# `models.groups` can enforce the service-account invariants without a circular
+# import. `open_webui.utils.group_api_key` builds the user-facing helpers on top.
+####################
+
+# Reserved id prefix. Deterministic per group, so the binding between a key and
+# its account can be re-derived and verified rather than trusted.
+GROUP_SERVICE_ACCOUNT_ID_PREFIX = 'group-api-'
+
+# Reserved email domain: emails are unique in the user table, so a directory
+# account can never collide with (or claim) a service account.
+GROUP_SERVICE_ACCOUNT_EMAIL_DOMAIN = 'group-api.local'
+
+# Marker written into `user.info`, so "this is a service account" is an explicit
+# stored fact and not only an inference from the id or email shape.
+GROUP_SERVICE_ACCOUNT_INFO_KEY = 'group_api_service_account'
+
+
+def group_service_account_id(group_id: str) -> str:
+    return f'{GROUP_SERVICE_ACCOUNT_ID_PREFIX}{group_id}'
+
+
+def group_service_account_email(group_id: str) -> str:
+    return f'{group_id}@{GROUP_SERVICE_ACCOUNT_EMAIL_DOMAIN}'
+
+
+def is_group_service_account_id(user_id: Optional[str]) -> bool:
+    return bool(user_id) and user_id.startswith(GROUP_SERVICE_ACCOUNT_ID_PREFIX)
+
 
 class GroupApiKey(Base):
     __tablename__ = 'group_api_key'

@@ -466,6 +466,22 @@ async def get_current_user_by_api_key(request, api_key: str):
             )
 
         user = await Users.get_user_by_id(group_api_key.user_id)
+
+        if user is not None:
+            # Issuance-time checks cannot protect a key issued earlier, so the
+            # account's invariants (right account, still a service account,
+            # still role='user', member of this group and no other) are
+            # re-verified per request. Drift blocks the key rather than being
+            # silently inherited by it.
+            from open_webui.utils.group_api_key import group_service_account_drift
+
+            drift = await group_service_account_drift(user, group_api_key.group_id)
+            if drift:
+                log.warning(f'Blocked group API key {group_api_key.id}: {drift}')
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=ERROR_MESSAGES.GROUP_SERVICE_ACCOUNT_DRIFT,
+                )
     else:
         # Each function call manages its own short-lived session internally
         user = await Users.get_user_by_api_key(api_key)
