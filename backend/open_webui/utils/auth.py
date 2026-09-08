@@ -23,6 +23,7 @@ from typing import Optional, Union, List, Dict
 from open_webui.utils.access_control import has_permission
 from open_webui.models.users import Users
 from open_webui.models.auths import Auths
+from open_webui.models.group_api_keys import GROUP_API_KEY_PREFIX, GroupApiKeys
 
 
 from open_webui.constants import ERROR_MESSAGES
@@ -449,8 +450,41 @@ async def get_current_user(
 
 
 async def get_current_user_by_api_key(request, api_key: str):
-    # Each function call manages its own short-lived session internally
-    user = await Users.get_user_by_api_key(api_key)
+    # A group key (`sk-grp-…`) is owned by a group rather than a person: it
+    # resolves to that group's service account, so everything downstream still
+    # authenticates as a user. Its issuance is admin-gated per group, so the
+    # per-user `features.api_keys` permission does not apply to it.
+    group_api_key = None
+
+    if api_key.startswith(GROUP_API_KEY_PREFIX):
+        group_api_key = await GroupApiKeys.get_key_by_key(api_key)
+
+        if group_api_key is None or group_api_key.is_expired():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=ERROR_MESSAGES.INVALID_TOKEN,
+            )
+
+        user = await Users.get_user_by_id(group_api_key.user_id)
+
+        if user is not None:
+            # Issuance-time checks cannot protect a key issued earlier, so the
+            # account's invariants (right account, still a service account,
+            # still role='user', member of this group and no other) are
+            # re-verified per request. Drift blocks the key rather than being
+            # silently inherited by it.
+            from open_webui.utils.group_api_key import group_service_account_drift
+
+            drift = await group_service_account_drift(user, group_api_key.group_id)
+            if drift:
+                log.warning(f'Blocked group API key {group_api_key.id}: {drift}')
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=ERROR_MESSAGES.GROUP_SERVICE_ACCOUNT_DRIFT,
+                )
+    else:
+        # Each function call manages its own short-lived session internally
+        user = await Users.get_user_by_api_key(api_key)
 
     if user is None:
         raise HTTPException(
@@ -459,7 +493,8 @@ async def get_current_user_by_api_key(request, api_key: str):
         )
 
     if not request.state.enable_api_keys or (
-        user.role != 'admin'
+        group_api_key is None
+        and user.role != 'admin'
         and not await has_permission(
             user.id,
             'features.api_keys',
@@ -483,6 +518,13 @@ async def get_current_user_by_api_key(request, api_key: str):
                 detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
             )
 
+    if group_api_key is not None:
+        # Tag the request so auditing can tell WHICH shared key was used —
+        # the service account alone only identifies the group.
+        request.state.group_api_key_id = group_api_key.id
+        request.state.api_key_group_id = group_api_key.group_id
+        await GroupApiKeys.update_last_used_by_id(group_api_key.id)
+
     # Add user info to current span
     if ENABLE_OTEL:
         from opentelemetry import trace
@@ -493,6 +535,8 @@ async def get_current_user_by_api_key(request, api_key: str):
             current_span.set_attribute('client.user.email', user.email)
             current_span.set_attribute('client.user.role', user.role)
             current_span.set_attribute('client.auth.type', 'api_key')
+            if group_api_key is not None:
+                current_span.set_attribute('client.api_key.group_id', group_api_key.group_id)
 
     await Users.update_last_active_by_id(user.id)
     return user

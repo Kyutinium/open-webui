@@ -39,6 +39,7 @@ from open_webui.utils.auth import (
     get_verified_user,
     validate_password,
 )
+from open_webui.utils.group_api_key import is_group_service_account
 from open_webui.utils.access_control import get_permissions, has_permission
 from open_webui.socket.main import disconnect_user_sessions
 
@@ -560,6 +561,15 @@ async def update_user_by_id(
         )
 
     user = await Users.get_user_by_id(user_id, db=db)
+
+    # A group API service account is managed by its group, not here: editing its
+    # role, e-mail or password would change what every `sk-grp-…` key issued for
+    # that group can do. Deleting it stays allowed — that revokes those keys.
+    if is_group_service_account(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.GROUP_SERVICE_ACCOUNT_NOT_INTERACTIVE,
+        )
 
     if user:
         if form_data.email is not None and form_data.email.lower() != user.email:

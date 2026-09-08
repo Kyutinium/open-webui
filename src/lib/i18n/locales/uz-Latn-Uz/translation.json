@@ -1,4 +1,5 @@
 {
+	"Managed by the group as its API service account.": "",
 	"-1 for no limit, or a positive integer for a specific limit": "Cheksiz uchun -1 yoki ma'lum chegara uchun musbat butun son",
 	"'s', 'm', 'h', 'd', 'w' or '-1' for no expiration.": "'s', 'm', 'h', 'd', 'w' yoki '-1' muddati tugamasligi uchun.",
 	"(e.g. `sh webui.sh --api --api-auth username_password`)": "(masalan, `sh webui.sh --api --api-auth username_password`)",

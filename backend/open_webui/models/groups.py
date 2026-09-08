@@ -10,6 +10,7 @@ from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.env import DEFAULT_GROUP_SHARE_PERMISSION
 
 from open_webui.models.files import FileMetadataResponse
+from open_webui.models.group_api_keys import group_service_account_id, is_group_service_account_id
 
 
 from pydantic import BaseModel, ConfigDict
@@ -125,6 +126,20 @@ class GroupUpdateForm(GroupForm):
 class GroupListResponse(BaseModel):
     items: list[GroupResponse] = []
     total: int = 0
+
+
+def _drop_foreign_service_accounts(group_id: str, user_ids: list[str]) -> list[str]:
+    """*user_ids* without other groups' service accounts.
+
+    A group's service account must belong to that group and nothing else — that
+    membership is exactly what a `sk-grp-…` key inherits, so letting one join a
+    second group would widen every key that group has already issued. Enforcing
+    it here, in the membership API itself, covers every caller at once (admin
+    UI, SCIM, LDAP group sync, OAuth group management) instead of one route at
+    a time. The group's own account passes through: that is how it joins.
+    """
+    own_id = group_service_account_id(group_id)
+    return [user_id for user_id in user_ids if not is_group_service_account_id(user_id) or user_id == own_id]
 
 
 class GroupTable:
@@ -365,7 +380,24 @@ class GroupTable:
     async def set_group_user_ids_by_id(
         self, group_id: str, user_ids: list[str], db: Optional[AsyncSession] = None
     ) -> None:
+        user_ids = _drop_foreign_service_accounts(group_id, user_ids)
+        own_service_account_id = group_service_account_id(group_id)
+
         async with get_async_db_context(db) as db:
+            # A wholesale replace must not evict the group's own service account
+            # — that would strip the group's permissions from every key already
+            # issued. Carry it over only if it is a member today, so a group that
+            # never issued a key does not gain a row for a user that does not exist.
+            if own_service_account_id not in user_ids:
+                result = await db.execute(
+                    select(GroupMember.id).filter(
+                        GroupMember.group_id == group_id,
+                        GroupMember.user_id == own_service_account_id,
+                    )
+                )
+                if result.scalars().first():
+                    user_ids = [*user_ids, own_service_account_id]
+
             # Delete existing members
             await db.execute(delete(GroupMember).filter(GroupMember.group_id == group_id))
 
@@ -428,6 +460,13 @@ class GroupTable:
 
     async def delete_group_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
         try:
+            # Revoke the group's shared API keys and drop its service account
+            # before the group row goes away, so neither can outlive the group.
+            # Imported here to avoid a circular import at module load.
+            from open_webui.utils.group_api_key import delete_group_service_account
+
+            await delete_group_service_account(id, db=db)
+
             async with get_async_db_context(db) as db:
                 await db.execute(delete(Group).filter_by(id=id))
                 await db.commit()
@@ -571,6 +610,8 @@ class GroupTable:
         user_ids: Optional[list[str]] = None,
         db: Optional[AsyncSession] = None,
     ) -> Optional[GroupModel]:
+        user_ids = _drop_foreign_service_accounts(id, user_ids or [])
+
         try:
             async with get_async_db_context(db) as db:
                 result = await db.execute(select(Group).filter_by(id=id))
@@ -612,6 +653,13 @@ class GroupTable:
         user_ids: Optional[list[str]] = None,
         db: Optional[AsyncSession] = None,
     ) -> Optional[GroupModel]:
+        # The group's own service account is not removable: evicting it would
+        # strip the group's permissions from every key already issued. Deleting
+        # the group (or the account) is the way to retire it, and both revoke
+        # the keys.
+        own_service_account_id = group_service_account_id(id)
+        user_ids = [user_id for user_id in (user_ids or []) if user_id != own_service_account_id]
+
         try:
             async with get_async_db_context(db) as db:
                 result = await db.execute(select(Group).filter_by(id=id))

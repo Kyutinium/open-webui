@@ -742,6 +742,11 @@ class UsersTable:
         try:
             from open_webui.models.groups import Groups
             from open_webui.models.chats import Chats
+            from open_webui.models.group_api_keys import GroupApiKeys
+
+            # Revoke any group API key that authenticates as this user, so a
+            # deleted service account cannot leave a live credential behind.
+            await GroupApiKeys.delete_keys_by_user_id(id, db=db)
 
             # Remove User from Groups
             await Groups.remove_user_from_all_groups(id)

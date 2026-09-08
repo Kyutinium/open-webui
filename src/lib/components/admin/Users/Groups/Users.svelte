@@ -26,6 +26,12 @@
 	export let groupId: string;
 	export let userCount = 0;
 
+	// A group's API service account is pinned to its own group by the backend,
+	// so offering the toggle here would silently do nothing.
+	const GROUP_SERVICE_ACCOUNT_ID_PREFIX = 'group-api-';
+	const isGroupServiceAccount = (user) =>
+		(user?.id ?? '').startsWith(GROUP_SERVICE_ACCOUNT_ID_PREFIX);
+
 	let users = null;
 	let total = null;
 
@@ -224,12 +230,19 @@
 							<tr class="bg-white dark:bg-gray-900 dark:border-gray-850 text-xs">
 								<td class=" px-3 py-1 w-8">
 									<div class="flex w-full justify-center">
-										<Checkbox
-											state={(user?.group_ids ?? []).includes(groupId) ? 'checked' : 'unchecked'}
-											on:change={(e) => {
-												toggleMember(user.id, e.detail);
-											}}
-										/>
+										<Tooltip
+											content={isGroupServiceAccount(user)
+												? $i18n.t('Managed by the group as its API service account.')
+												: ''}
+										>
+											<Checkbox
+												state={(user?.group_ids ?? []).includes(groupId) ? 'checked' : 'unchecked'}
+												disabled={isGroupServiceAccount(user)}
+												on:change={(e) => {
+													toggleMember(user.id, e.detail);
+												}}
+											/>
+										</Tooltip>
 									</div>
 								</td>
 								<td class="px-3 py-1 min-w-[7rem] w-28">

@@ -350,7 +350,106 @@ Open WebUI 이미지 재빌드 없이 pipelines 컨테이너 재시작만으로 
 
 ---
 
-## 11. TODO / Future Work
+## 11. Group API Keys (그룹 공용 API 키)
+
+특정 개인이 아니라 **그룹이 소유하는 공용 API 키**. 담당자가 바뀌어도 살아있고,
+개인 계정이 사라져도 팀 자동화가 끊기지 않는다.
+
+### 왜 서비스 계정인가
+
+Open WebUI는 모든 요청을 **사용자로** 인증한다 — 권한(`get_permissions`), 모델 접근,
+채팅 소유, 감사가 전부 `UserModel`에서 갈라진다. 그래서 "아무 유저에도 속하지 않는 키"는
+인증될 대상 자체가 없다. 대신 그룹마다 **서비스 계정**(숨김 유저 row, 그 그룹의 멤버,
+`auth` row 없음 → 로그인 폼·LDAP·OAuth 어디로도 로그인 불가)을 두고 키가 그 계정으로
+해석되게 했다. 하위 권한 스택은 하나도 건드리지 않는다.
+
+AD SSO 환경에서는 이게 유일한 실용 경로이기도 하다. 로컬 서비스 계정은 AD에 없어서
+로그인할 수 없고, 로그인할 수 없으면 개인 API 키도 발급할 수 없다.
+
+### Backend
+
+- **`backend/open_webui/models/group_api_keys.py`** (new)
+  - `group_api_key` 테이블: `group_id`(FK, ON DELETE CASCADE), `user_id`(서비스 계정),
+    `created_by`, `name`, `key`(unique), `expires_at`, `last_used_at`
+  - 키 형식 `sk-grp-<32hex>` — `sk-` 로 시작해야 인증 경로가 API 키로 라우팅하고,
+    접두사 덕분에 DB 조회 없이 개인 키와 구분된다
+  - 그룹당 최대 `MAX_GROUP_API_KEYS`(20)개. 목록에는 `key_hint`(`sk-grp-...abcd`)만 나가고
+    평문은 **생성 응답 딱 한 번**
+- **`backend/open_webui/utils/group_api_key.py`** (new)
+  - `ensure_group_service_account` — 최초 발급 시 생성, 발급할 때마다 그룹 멤버십을 다시
+    보장한다 (**그 멤버십이 곧 키의 권한**이므로 가정하지 않고 매번 확인)
+  - 계정 표식이 셋: 예약 id 접두사 `group-api-`, `user.info`의
+    `group_api_service_account` 마커, 예약 이메일 도메인 `@group-api.local`.
+    `is_group_service_account`는 **OR**로 판정한다 — 이걸 쓰는 쪽이 전부 차단 가드라
+    fail-closed가 맞는 방향이다
+  - 그룹 이름이 바뀌면 계정 표시 이름도 따라가고, 마커가 없는 옛 row는 발급 시 치유된다
+- **`backend/open_webui/utils/auth.py`** — `get_current_user_by_api_key` 가 `sk-grp-` 를
+  분기 처리: 만료 확인 → 서비스 계정 로드 → `request.state.group_api_key_id` / `api_key_group_id`
+  스탬프 → `last_used_at` 기록. `ENABLE_API_KEYS`와 엔드포인트 제한은 그대로 적용하되,
+  **개인 키 권한(`features.api_keys`)은 적용하지 않는다** — 발급 자체가 관리자 게이트다
+- **`backend/open_webui/routers/groups.py`** — 관리자 전용 3개
+  (`GET`/`POST /api/v1/groups/id/{id}/api_keys`, `DELETE .../api_keys/{key_id}`).
+  폐기는 경로의 그룹으로 스코프되어 다른 그룹의 키를 지울 수 없다
+- **`backend/open_webui/models/groups.py`** — 그룹 삭제 시 키 + 서비스 계정 정리, 그리고
+  멤버십 불변식 (아래 참고)
+- **`backend/open_webui/models/users.py`** — 서비스 계정을 지우면 그 키도 함께 폐기
+  (죽은 계정이 살아있는 자격증명을 남기지 않게)
+- **마이그레이션** `e2f3a4b5c6d7_add_group_api_key_table.py`
+- **테스트** `backend/open_webui/test/apps/webui/models/test_group_api_keys.py` (new)
+  — SQLite로 도는 12개 (Docker 불필요): 인증·만료·폐기·그룹 삭제 정리·라우트 가드
+
+### 서비스 계정 경계 — "auth row가 없다"에 기대지 않는다
+
+`auth` row가 없다는 건 **결과**지 가드가 아니다. 폼/LDAP는 `Auths.authenticate_*`를 타지만
+OAuth 콜백은 경로가 다르다 — `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`이 켜져 있으면 이메일로 기존
+`User`를 찾아 sub를 붙이고 **JWT를 직접 발급**한다. 그래서 세 지점에서 명시적으로 강제한다.
+
+1. **로그인 불가**: `routers/auths.py`의 `create_session_response`(signin·LDAP·signup·
+   admin add·token exchange가 전부 지나가는 길목) + `utils/oauth.py`의 콜백. OAuth는
+   **sub를 쓰기 전에** 막는다 — merge가 먼저 일어나면 그 뒤의 role/group 관리가 모든
+   그룹 키가 인증하는 바로 그 row를 건드리게 된다
+2. **멤버십 고정**: `Groups.add_users_to_group` / `remove_users_from_group` /
+   `set_group_user_ids_by_id` 자체에서 강제한다 — 라우터가 아니라 모델 층이라 admin UI,
+   SCIM, LDAP 그룹 동기화, OAuth 그룹 관리가 전부 한 번에 덮인다. 남의 그룹 서비스 계정은
+   들어올 수 없고, 자기 그룹에서는 빠질 수 없다. 전체 교체(`set_...`)는 **현재 멤버일 때만**
+   유지한다 (키를 발급한 적 없는 그룹에 유령 멤버 row를 만들지 않으려고)
+3. **요청마다 재검증**: `group_service_account_drift` — 키의 그룹에서 파생한 계정이 맞는지,
+   여전히 서비스 계정 표식이 있는지, `role='user'`인지, **그 그룹에만** 속하는지. 발급 시점
+   검사는 이미 발급된 키를 지켜주지 못하므로, 나중에 role이 올라가거나 다른 그룹에 들어가도
+   기존 키가 그 권한을 조용히 물려받지 않는다 (403, 로그에 사유 기록). 그룹 키 요청당
+   멤버십 조회 1회가 추가된다
+
+- **`routers/users.py`** — 관리자 사용자 수정도 서비스 계정에는 403 (삭제는 허용 —
+  그건 그 키들을 폐기하는 정상 경로다). 그룹 편집 → 사용자 탭의 체크박스도 비활성
+
+### Frontend
+
+- **`src/lib/components/admin/Users/Groups/ApiKeys.svelte`** (new) — 관리자 패널 →
+  그룹 편집 → **API Keys** 탭. 발급(이름 + 만료 없음/30/90/365일), 목록(마지막 사용·만료),
+  폐기. 생성 직후 한 번만 평문 노출 + 복사
+- **`src/lib/components/admin/Users/Groups/EditGroupModal.svelte`** — 탭 추가
+  (기존 그룹 편집일 때만; 그룹 추가 모달과 기본 권한 모달은 그대로)
+- **`src/lib/apis/groups/index.ts`** — `getGroupApiKeys` / `createGroupApiKey` / `deleteGroupApiKey`
+- **`src/lib/components/icons/Key.svelte`** (new)
+
+### 레이트 리밋과의 관계
+
+서비스 계정은 **정확히 한 그룹**에만 속하므로 `check_api_key_rate_limit` 의 그룹 귀속이
+자동으로 걸린다 (`apikey:group:<id>:<model>`). 그룹 키는 `X-RateLimit-Group` 헤더가
+필요 없다.
+
+### 주의
+
+- 서비스 계정은 관리자 사용자 목록에 `<그룹명> (Group API)` 로 **보인다**. 로그인·수정은
+  막혀 있고, 지우면 그 그룹의 키가 전부 폐기된다 (다음 발급 때 계정은 다시 만들어진다)
+- 키는 기존 `api_key` 테이블과 마찬가지로 **평문 저장**이다. 해시 저장으로 바꾸려면 두
+  테이블을 같이 옮겨야 한다
+- 감사 로그는 서비스 계정(=그룹) 단위로 남는다. 어느 키였는지는
+  `request.state.group_api_key_id` 로 구분한다 — 감사 row에 싣는 것은 아직 안 했다
+
+---
+
+## 12. TODO / Future Work
 
 - **Confluence 인증 통합**: dscrowd.token_key 쿠키 자동 획득
   - Confluence tool 토글 시 로그인 팝업 → 쿠키 생성 → pipe에 전달

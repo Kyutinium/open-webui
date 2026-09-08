@@ -87,6 +87,7 @@ from open_webui.env import (
 )
 from open_webui.utils.misc import parse_duration
 from open_webui.utils.auth import get_password_hash, create_token
+from open_webui.utils.group_api_key import is_group_service_account
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.groups import apply_default_group_assignment
 from open_webui.retrieval.web.utils import validate_url
@@ -1064,6 +1065,21 @@ async def resolve_d_index(user_data: dict) -> Optional[int]:
     return 0
 
 
+def _reject_group_service_account_login(user) -> None:
+    """Refuse to log in as a group API service account.
+
+    These rows exist only to be the identity behind a `sk-grp-…` key. They have
+    no `auth` row, which stops the form and LDAP paths, but OAuth needs an
+    explicit guard: it resolves users by sub or e-mail and issues a JWT itself.
+    """
+    if is_group_service_account(user):
+        log.warning(f'Blocked an OAuth login attempt against group service account {user.id}')
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.GROUP_SERVICE_ACCOUNT_NOT_INTERACTIVE,
+        )
+
+
 class OAuthManager:
     def __init__(self, app):
         self.oauth = OAuth()
@@ -1658,11 +1674,19 @@ class OAuthManager:
 
             # Check if the user exists
             user = await Users.get_user_by_oauth_sub(provider, sub, db=db)
+            _reject_group_service_account_login(user)
+
             if not user:
                 # If the user does not exist, check if merging is enabled
                 if auth_manager_config.OAUTH_MERGE_ACCOUNTS_BY_EMAIL:
                     # Check if the user exists by email
                     user = await Users.get_user_by_email(email, db=db)
+                    # Checked BEFORE the sub is bound: merge-by-email is the one
+                    # path that can attach an IdP principal to an existing user
+                    # row without an `auth` row ever existing, and role/group
+                    # management below would then mutate the very account every
+                    # group key authenticates as.
+                    _reject_group_service_account_login(user)
                     if user:
                         # Update the user with the new oauth sub
                         await Users.update_user_oauth_by_id(user.id, provider, sub, db=db)

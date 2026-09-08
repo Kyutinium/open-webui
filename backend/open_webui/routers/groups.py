@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from typing import Optional
 import logging
@@ -12,6 +13,16 @@ from open_webui.models.groups import (
     GroupResponse,
     UserIdsForm,
 )
+from open_webui.models.group_api_keys import (
+    MAX_GROUP_API_KEYS,
+    GroupApiKeyCreateResponse,
+    GroupApiKeyForm,
+    GroupApiKeyResponse,
+    GroupApiKeys,
+    key_hint,
+    to_response,
+)
+from open_webui.utils.group_api_key import create_group_api_key, ensure_group_service_account
 
 from open_webui.config import CACHE_DIR
 from open_webui.constants import ERROR_MESSAGES
@@ -252,6 +263,116 @@ async def remove_users_from_group(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ERROR_MESSAGES.DEFAULT(e),
         )
+
+
+############################
+# Group API Keys
+#
+# A shared, group-owned credential: it authenticates as the group's service
+# account instead of a person, so it survives staff changes and never carries
+# an individual's identity. Admin-managed, like every other group setting.
+############################
+
+
+async def _get_group_or_404(id: str, db: AsyncSession):
+    group = await Groups.get_group_by_id(id, db=db)
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+    return group
+
+
+@router.get('/id/{id}/api_keys', response_model=list[GroupApiKeyResponse])
+async def get_group_api_keys(id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)):
+    await _get_group_or_404(id, db)
+    keys = await GroupApiKeys.get_keys_by_group_id(id, db=db)
+    return [to_response(key) for key in keys]
+
+
+@router.post('/id/{id}/api_keys', response_model=GroupApiKeyCreateResponse)
+async def create_group_api_key_by_group_id(
+    request: Request,
+    id: str,
+    form_data: GroupApiKeyForm,
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    if not request.app.state.config.ENABLE_API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.API_KEY_CREATION_NOT_ALLOWED,
+        )
+
+    group = await _get_group_or_404(id, db)
+
+    if await GroupApiKeys.count_keys_by_group_id(id, db=db) >= MAX_GROUP_API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT(f'A group can hold at most {MAX_GROUP_API_KEYS} API keys. Revoke one first.'),
+        )
+
+    if form_data.expires_at is not None and form_data.expires_at <= int(time.time()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT('The expiration date must be in the future.'),
+        )
+
+    name = (form_data.name or '').strip()[:100] or None
+
+    # The service account is created on first issuance and re-joined to the
+    # group every time, since its membership is what carries the permissions.
+    service_account = await ensure_group_service_account(group, db=db)
+    if service_account is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ERROR_MESSAGES.CREATE_API_KEY_ERROR,
+        )
+
+    api_key = await GroupApiKeys.insert_new_key(
+        group_id=id,
+        user_id=service_account.id,
+        key=create_group_api_key(),
+        name=name,
+        expires_at=form_data.expires_at,
+        created_by=user.id,
+        db=db,
+    )
+
+    if api_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ERROR_MESSAGES.CREATE_API_KEY_ERROR,
+        )
+
+    # The only response that carries the secret; afterwards only the hint is
+    # ever returned, so the admin must copy it now.
+    return GroupApiKeyCreateResponse(
+        **api_key.model_dump(),
+        key_hint=key_hint(api_key.key),
+    )
+
+
+@router.delete('/id/{id}/api_keys/{key_id}', response_model=bool)
+async def delete_group_api_key_by_id(
+    id: str,
+    key_id: str,
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await _get_group_or_404(id, db)
+
+    api_key = await GroupApiKeys.get_key_by_id(key_id, db=db)
+    # Scoped to the group in the path, so a key can never be revoked through
+    # another group's endpoint.
+    if api_key is None or api_key.group_id != id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    return await GroupApiKeys.delete_key_by_id(key_id, db=db)
 
 
 ############################
