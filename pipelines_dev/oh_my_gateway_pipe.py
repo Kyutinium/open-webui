@@ -1,7 +1,7 @@
 """
 title: Oh My Gateway
 author: claude-code-openai-wrapper
-version: 0.4.0
+version: 0.5.0
 description: .
     Oh My Gateway pipe connecting Open WebUI to the oh-my-gateway
     ``/v1/responses`` API. Derived from the stable
@@ -31,6 +31,21 @@ description: .
        replays it as a ``function_call_output`` with ``previous_response_id``
        to resume the paused session) — it does not flow back through this
        pipe.
+
+    4. The question outlives the injected protocol — and a turn that lost
+       its context says so. The per-turn blocks below (``<response>`` rule,
+       MEMORY.md reference, MEMORY.md update protocol) are ~3.5 KB of
+       imperative text appended AFTER the user's question, and the MEMORY
+       protocol's last numbered step was a marker plus the response token. By
+       recency the model's terminal instruction was therefore "protocol
+       complete", not "answer the question", so a long tool-heavy turn could
+       close with meta-narration ("what was I doing… there is no user
+       question") which this pipe then rendered as the answer, because the
+       response token had already been emitted. The question is now restated
+       last, no block presents the response token as a line to imitate, and
+       ``response.compaction`` / ``response.incomplete`` are rendered instead
+       of dropped so a summarised or truncated turn is legible rather than
+       looking like a bad answer.
 
     Other features are inherited unchanged:
     - Session-aware via previous_response_id (with task-chain skip
@@ -118,6 +133,19 @@ _TOOL_NOISE_RE = re.compile(
 def _is_tool_noise(text: str) -> bool:
     """Return True if *text* is SDK tool-execution noise."""
     return bool(text) and _TOOL_NOISE_RE.match(text) is not None
+
+
+# Why a turn stopped early, in the user's language. ``max_turns`` is the common
+# one on agentic turns (the gateway's DEFAULT_MAX_TURNS bounds subagent depth);
+# the empty key is the fallback for a reason this pipe has not seen yet.
+_INCOMPLETE_NOTICE = {
+    "max_turns": (
+        "\n\n⚠️ 에이전트 턴 수 상한에 걸려 답변이 중간에 끊겼습니다. "
+        "위 내용은 거기까지의 실제 작업 결과입니다 — 질문을 나눠서 다시 물어보세요.\n"
+    ),
+    "user_cancelled": "\n\n⚠️ 요청이 취소되어 답변이 중간에 끊겼습니다.\n",
+    "": "\n\n⚠️ 답변이 중간에 끊겼습니다 (reason={reason}).\n",
+}
 
 
 # Absolute ceiling on inlined tool text, applied even when the valve limit is
@@ -512,19 +540,92 @@ MEMORY.md 는 **user-level 파일**이다 — backend (claude / codex / opencode
 4. **업데이트 불필요 시**: `MEMORY_SKIP: <사유>` 출력
    (사유 예시: "novelty 미달" / "observation <2회" / "기존 항목과 중복" / "update 불필요")
 
-5. 마지막으로 `<response>` 토큰 출력.
+5. `<response>` 토큰을 출력하고, **그 다음에 이번 턴 사용자 질문에 대한 최종 답변을 작성한다.**
+   이 프로토콜은 답변의 전제 조건일 뿐 턴의 목적이 아니다 — 마커와 `<response>` 만 출력하고
+   턴을 끝내는 것은 실패다. 질문 원문은 이 메시지 맨 끝 `## 지금 답할 질문` 절에 다시 적혀 있으니,
+   검색이 길어져 앞부분이 멀어졌더라도 그 절을 다시 읽고 답변하라.
 
 **금지 규칙**: Edit 도구 호출이 선행되지 않았다면 `MEMORY_UPDATE` 를 적지 마라.
 Edit 없이 `MEMORY_UPDATE` 를 출력하는 것은 **false reporting** 이며 protocol violation 이다.
 
-출력 예 (업데이트 수행 시):
-```
-[Edit 도구 호출 → "File updated" 결과 확인됨]
-MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
-<response>
-```
+출력 순서 (업데이트 수행 시):
+1. Edit 도구 호출 → "File updated" 결과 확인
+2. `MEMORY_UPDATE: <방금 추가한 entry 한 줄 요약>` 한 줄
+3. 응답 시작 토큰 한 개 (`## 답변 작성 규칙` 이 지정한 토큰). 지금 이 설명을 읽는 중에
+   미리 출력하지 마라 — 실제 답변을 쓰기 직전에 딱 한 번만이다.
+4. 사용자 질문에 대한 최종 답변 본문
 
-이 마커 라인은 `<thought>` collapsible 안에 남고 최종 사용자 응답에는 표시되지 않는다."""
+마커 라인은 `<thought>` collapsible 안에 남고 최종 사용자 응답에는 표시되지 않는다."""
+
+    @staticmethod
+    def _get_final_question_block(question: str) -> str:
+        """Restate the turn's question *after* the protocol blocks.
+
+        The blocks above are ~3.5 KB of imperative text appended after the
+        user's question, and the MEMORY protocol's last numbered step is a
+        marker. By recency the model's terminal instruction is therefore
+        "protocol complete", not "answer the question" — which is how a long
+        tool-heavy turn ends in meta-narration ("what was I doing? there is no
+        user question") instead of an answer, with the pipe rendering that
+        narration as the reply because the response token had already been
+        emitted. Putting the question back in the terminal position is the fix.
+        """
+        return (
+            "\n\n## 지금 답할 질문\n\n"
+            "<user_question>\n"
+            f"{question}\n"
+            "</user_question>\n\n"
+            "위 규칙과 프로토콜은 전제 조건이다. 이 턴의 산출물은 이 질문에 대한 답변이다.\n"
+            "질문이 여러 부분으로 되어 있으면 **모든 부분**에 답한다."
+        )
+
+    def _append_turn_instructions(
+        self, text: str, task: Optional[str], question: str
+    ) -> str:
+        """Append the per-turn protocol blocks, then restate *question* last.
+
+        One place for both the string and the multimodal branch so the two can
+        never drift on which blocks are appended or in what order.
+        """
+        appended = False
+        if (
+            self.valves.OUTPUT_FORMAT == "thought_wrapped"
+            and self.valves.THOUGHT_WRAPPED_INSTRUCTION
+            and not task
+        ):
+            text += self._get_thought_wrapped_instruction()
+            appended = True
+        if self.valves.MEMORY_REFERENCE_PROMPT and not task:
+            text += self._get_memory_reference_instruction()
+            appended = True
+        if self.valves.MEMORY_UPDATE_PROMPT and not task:
+            text += self._get_memory_update_instruction()
+            appended = True
+        question = question.strip()
+        if appended and question:
+            text += self._get_final_question_block(question)
+        return text
+
+    @staticmethod
+    def _render_compaction(event: dict) -> str:
+        """One line for a context compaction, shown inside the thought block.
+
+        Compaction replaces the earlier conversation with a summary, so a turn
+        can genuinely lose the question it started from. The gateway sends a
+        ``start`` phase (the pause has begun) and a terminal one carrying what
+        it did; without ``post_tokens`` no number is invented.
+        """
+        if event.get("phase") == "start":
+            return "\n\n🗜️ 컨텍스트 압축 중…\n\n"
+        trigger = {"auto": "자동", "manual": "수동"}.get(event.get("trigger") or "", "")
+        head = f"🗜️ 컨텍스트 압축{f' ({trigger})' if trigger else ''}"
+        pre, post = event.get("pre_tokens"), event.get("post_tokens")
+        if isinstance(pre, int) and isinstance(post, int):
+            return (
+                f"\n\n{head} — {pre:,} → {post:,} tokens "
+                f"(이전 대화가 요약으로 대체됨)\n\n"
+            )
+        return f"\n\n{head} (이전 대화가 요약으로 대체됨)\n\n"
 
     def _wrap_thought_content(self, text: str) -> str:
         if not text:
@@ -932,6 +1033,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         messages[i] = {**messages[i], "content": content}
                         log.info("[IMAGE] rewrote message with %d image path(s)", len(saved_paths))
                 if isinstance(content, str):
+                    question = content
                     content = self._inject_context(
                         content,
                         __user__,
@@ -940,16 +1042,9 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                         dscrowd_token=dscrowd_token or None,
                         mlm_username=owui_username or None,
                     )
-                    if (
-                        self.valves.OUTPUT_FORMAT == "thought_wrapped"
-                        and self.valves.THOUGHT_WRAPPED_INSTRUCTION
-                        and not __task__
-                    ):
-                        content += self._get_thought_wrapped_instruction()
-                    if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
-                        content += self._get_memory_reference_instruction()
-                    if self.valves.MEMORY_UPDATE_PROMPT and not __task__:
-                        content += self._get_memory_update_instruction()
+                    content = self._append_turn_instructions(
+                        content, __task__, question
+                    )
                     messages[i] = {**messages[i], "content": content}
                 elif isinstance(content, list):
                     # Multimodal content (e.g. image + text from VQA queries).
@@ -962,6 +1057,7 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             break
                     if last_text_idx is not None:
                         text = content[last_text_idx].get("text", "")
+                        question = text
                         text = self._inject_context(
                             text,
                             __user__,
@@ -970,16 +1066,9 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             dscrowd_token=dscrowd_token or None,
                             mlm_username=owui_username or None,
                         )
-                        if (
-                            self.valves.OUTPUT_FORMAT == "thought_wrapped"
-                            and self.valves.THOUGHT_WRAPPED_INSTRUCTION
-                            and not __task__
-                        ):
-                            text += self._get_thought_wrapped_instruction()
-                        if self.valves.MEMORY_REFERENCE_PROMPT and not __task__:
-                            text += self._get_memory_reference_instruction()
-                        if self.valves.MEMORY_UPDATE_PROMPT and not __task__:
-                            text += self._get_memory_update_instruction()
+                        text = self._append_turn_instructions(
+                            text, __task__, question
+                        )
                         content = list(content)
                         content[last_text_idx] = {**content[last_text_idx], "text": text}
                     messages[i] = {**messages[i], "content": content}
@@ -1256,6 +1345,56 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                             err_msg = err.get("message", "Unknown error")
                             log.error("[PIPE] response.failed: %s", err_msg)
                             yield f"\n\nError: {err_msg}"
+                            continue
+
+                        # Context compaction and a max_turns cutoff are the two
+                        # ways a turn loses its own earlier context or gets cut
+                        # short. The gateway reports both (response.compaction
+                        # since it forwards the CLI's compact markers, and
+                        # response.incomplete with incomplete_details.reason),
+                        # and dropping them is what made a turn that had
+                        # silently forgotten the question indistinguishable from
+                        # a turn that simply answered badly.
+                        if event_type == "response.compaction":
+                            note = self._render_compaction(event)
+                            log.warning("[PIPE] compaction %s", note.strip())
+                            if reasoning_open and not thought_wrapped:
+                                yield "\n</think>\n\n"
+                                reasoning_open = False
+                            if thought_wrapped and not response_tag_sent and text_buffer:
+                                yield text_buffer
+                                text_buffer = ""
+                            yield note
+                            continue
+
+                        if event_type == "response.incomplete":
+                            r_obj = event.get("response", {}) or {}
+                            reason = (
+                                (r_obj.get("incomplete_details") or {}).get("reason")
+                                or "unknown"
+                            )
+                            # An incomplete turn is still a committed turn on the
+                            # gateway's chain. Only response.completed used to
+                            # record the id, so the next user turn chained off a
+                            # now-stale one and paid a 409 recovery round-trip.
+                            resp_id = r_obj.get("id", "")
+                            if resp_id and chat_id and not task:
+                                self._response_ids[chat_id] = resp_id
+                            log.warning(
+                                "[PIPE] response.incomplete reason=%s id=%s", reason, resp_id
+                            )
+                            if reasoning_open and not thought_wrapped:
+                                yield "\n</think>\n\n"
+                                reasoning_open = False
+                            if thought_wrapped and not response_tag_sent:
+                                if text_buffer:
+                                    yield text_buffer
+                                    text_buffer = ""
+                                yield "\n</thought>\n\n"
+                                response_tag_sent = True
+                            yield _INCOMPLETE_NOTICE.get(reason, _INCOMPLETE_NOTICE[""]).format(
+                                reason=reason
+                            )
                             continue
 
                         # Reasoning (Claude extended thinking) passthrough.
@@ -1567,10 +1706,26 @@ MEMORY_UPDATE: mm_cql 제품명+속성 키워드 패턴 3회차 관찰
                     full_text_acc += text_buffer
                     yield text_buffer
                 else:
+                    # Tools ran and no <response> ever arrived. Everything has
+                    # already streamed into <thought>, and BUFFER_SIZE means
+                    # almost none of it is still recoverable here — so closing
+                    # the block silently left the user with a message whose
+                    # visible body was EMPTY, indistinguishable from a wedge.
+                    # Say what happened instead.
                     if text_buffer:
                         full_text_acc += text_buffer
                         yield text_buffer
-                    yield "\n</thought>"
+                    log.warning(
+                        "[PIPE] turn ended without <response> after tool use — "
+                        "answer stayed inside <thought> for chat=%s",
+                        chat_id,
+                    )
+                    yield "\n</thought>\n\n"
+                    yield (
+                        "⚠️ 모델이 응답 시작 토큰을 출력하지 않아 최종 답변 구간을 "
+                        "분리할 수 없었습니다. 위 접힌 영역을 펼치면 실제 작업 내용과 "
+                        "결론이 그대로 들어 있습니다."
+                    )
             elif thought_wrapped and response_tag_sent and text_buffer:
                 # Response phase ended with a held-back partial-tag prefix
                 # that turned out to be plain text. Strip any complete tags
