@@ -34,7 +34,8 @@
 		showSettings,
 		selectedTerminalId,
 		TTSWorker,
-		temporaryChatEnabled
+		temporaryChatEnabled,
+		chatFileUploadUiEnabled
 	} from '$lib/stores';
 
 	import {
@@ -905,7 +906,7 @@
 			}
 		}
 
-		if (($config?.features?.enable_file_upload_ui ?? false) && e.dataTransfer?.files) {
+		if ($chatFileUploadUiEnabled && e.dataTransfer?.files) {
 			const inputFiles = Array.from(e.dataTransfer?.files);
 			if (inputFiles && inputFiles.length > 0) {
 				console.log(inputFiles);

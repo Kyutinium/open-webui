@@ -533,6 +533,7 @@ from open_webui.env import (
     ENABLE_VERSION_UPDATE_CHECK,
     FILE_NAV_REFRESH_INTERVAL,
     ENABLE_FILE_UPLOAD_UI,
+    FILE_UPLOAD_UI_FILE_MANAGER_ONLY,
     ENABLE_OTEL,
     EXTERNAL_PWA_MANIFEST_URL,
     AIOHTTP_CLIENT_SESSION_SSL,
@@ -2273,6 +2274,7 @@ async def get_app_config(request: Request):
             'enable_version_update_check': ENABLE_VERSION_UPDATE_CHECK,
             'file_nav_refresh_interval': FILE_NAV_REFRESH_INTERVAL,
             'enable_file_upload_ui': ENABLE_FILE_UPLOAD_UI,
+            'file_upload_ui_file_manager_only': FILE_UPLOAD_UI_FILE_MANAGER_ONLY,
             'enable_public_active_users_count': ENABLE_PUBLIC_ACTIVE_USERS_COUNT,
             'enable_easter_eggs': ENABLE_EASTER_EGGS,
             **(
